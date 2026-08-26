@@ -6,6 +6,7 @@
 - AI Memory (حافظه‌ی هوش مصنوعی)
 - Automation Rules (موتور اتوماسیون)
 - Settings (تنظیمات یکپارچه)
+- Deleted/Edited Messages (پیام‌های حذف/ویرایش‌شده)
 """
 
 from __future__ import annotations
@@ -192,3 +193,55 @@ class HafezPoem(Base):
     poem: Mapped[str] = mapped_column(Text, nullable=False)  # ابیات، هر مصرع در یک خط
     interpretation: Mapped[str | None] = mapped_column(Text, nullable=True)
     alt_interpretation: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+# ------------------------------------------------------------ Deleted/Edited Message Log ---
+class DeletedMessageLog(Base):
+    """
+    پیام‌های حذف‌شده یا ویرایش‌شده‌ای که توسط سلف‌بات ثبت می‌شن.
+    وقتی کسی در پیوی یا گروهی پیامش رو حذف یا ویرایش کنه، نسخه‌ی قبلی اینجا ذخیره می‌شه.
+    """
+
+    __tablename__ = "deleted_message_log"
+    __table_args__ = (
+        Index("ix_deleted_log_chat_id", "chat_id"),
+        Index("ix_deleted_log_sender_id", "sender_id"),
+        Index("ix_deleted_log_event_type", "event_type"),
+        Index("ix_deleted_log_created_at", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    message_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    sender_id: Mapped[int] = mapped_column(BigInteger, nullable=True)
+    sender_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sender_username: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    text: Mapped[str] = mapped_column(Text, nullable=False)  # متن قبل از حذف/ویرایش
+    event_type: Mapped[str] = mapped_column(String(16), nullable=False)  # 'deleted' یا 'edited'
+    is_private: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    chat_title: Mapped[str | None] = mapped_column(Text, nullable=True)  # برای گروه‌ها/کانال‌ها
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+# ------------------------------------------------------------ Tracking Channel Settings ---
+class TrackingChannelSettings(Base):
+    """تنظیمات کانال ارسال پیام‌های حذف/ویرایش‌شده."""
+
+    __tablename__ = "tracking_channel_settings"
+    __table_args__ = (
+        CheckConstraint("id = 1", name="ck_tracking_channel_singleton"),
+    )
+
+    id: Mapped[int] = mapped_column(SmallInteger, primary_key=True, default=1)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    channel_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)  # chat_id کانال مقصد
+    channel_username: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    track_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    track_edited: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    track_private: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    track_groups: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        server_default=func.now(), onupdate=func.now(), nullable=False
+    )
