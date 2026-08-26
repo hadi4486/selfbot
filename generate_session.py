@@ -13,8 +13,13 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-API_ID = int(os.getenv("API_ID"))
-API_HASH = os.getenv("API_HASH")
+API_ID_RAW = os.getenv("API_ID", "")
+if not API_ID_RAW:
+    raise SystemExit("❌ متغیر محیطی API_ID تنظیم نشده. اول فایل .env رو بساز.")
+API_ID = int(API_ID_RAW)
+API_HASH = os.getenv("API_HASH", "")
+if not API_HASH:
+    raise SystemExit("❌ متغیر محیطی API_HASH تنظیم نشده. اول فایل .env رو بساز.")
 
 with TelegramClient(StringSession(), API_ID, API_HASH) as client:
     print("\n✅ لاگین موفق بود.\n")
