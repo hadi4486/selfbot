@@ -51,11 +51,10 @@ async def get_memories_by_category(category: str) -> List[AIMemory]:
 
 async def search_memories(query: str) -> Dict[str, List[AIMemory]]:
     """جستجو در حافظه‌ها (بر اساس کلید یا مقدار)."""
-    escaped = query.replace("%", "\\%").replace("_", "\\_")
     async with session_scope() as session:
         stmt = select(AIMemory).where(
-            (AIMemory.key.ilike(f"%{escaped}%")) |
-            (AIMemory.value.ilike(f"%{escaped}%"))
+            (AIMemory.key.ilike(f"%{query}%")) |
+            (AIMemory.value.ilike(f"%{query}%"))
         )
         result = await session.execute(stmt)
         items = list(result.scalars().all())
