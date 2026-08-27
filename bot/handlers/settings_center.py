@@ -37,6 +37,7 @@ SETTINGS_KEYS = {
     "font_enabled": "🎨 فونتِ خودکار",
     "stats_enabled": "📊 آمار",
     "notifications_enabled": "🔔 موتورِ اعلان",
+    "message_tracker_enabled": "🕵️ ردیابِ ویرایش/حذف",
 }
 
 _TRUE_WORDS = ("true", "on", "1", "روشن", "فعال")
@@ -55,6 +56,7 @@ def _live_status() -> dict:
         "font_enabled": font_state["enabled"],
         "stats_enabled": toggles["stats_enabled"],
         "notifications_enabled": toggles["notifications_enabled"],
+        "message_tracker_enabled": toggles["message_tracker_enabled"],
     }
 
 
@@ -136,7 +138,7 @@ async def _set_setting(event, key: str, value: str):
     elif key == "font_enabled":
         font_state["enabled"] = enabled
         await save_font_state()
-    elif key in ("scheduler_enabled", "stats_enabled", "notifications_enabled"):
+    elif key in ("scheduler_enabled", "stats_enabled", "notifications_enabled", "message_tracker_enabled"):
         await set_toggle(key, enabled)
 
     await event.edit(f"✅ {SETTINGS_KEYS[key]} → {'فعال ✅' if enabled else 'غیرفعال ❌'}")

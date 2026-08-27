@@ -131,16 +131,77 @@ async def _handle_save(rule, context: Dict[str, Any]):
         logger.error(f"خطا در ذخیره: {e}")
 
 
+@register_action("guard")
+async def _handle_guard(rule, context: Dict[str, Any]):
+    """اجرای عملیات مدیریت گروه (گارد)."""
+    chat_id = context.get("chat_id")
+    if not chat_id:
+        return
+    try:
+        # rule.action_value حاوی دستور گارد است: "ban", "kick", "mute", "warn"
+        command = rule.action_value.strip().lower()
+        sender_id = context.get("sender_id")
+        if not sender_id:
+            return
+        if command == "ban":
+            await client.ban_participant(chat_id, sender_id)
+        elif command == "kick":
+            await client.kick_participant(chat_id, sender_id)
+        elif command == "mute":
+            # mute به مدت 1 ساعت (می‌توان تنظیم کرد)
+            await client.mute_participant(chat_id, sender_id, until_date=None)
+        elif command == "warn":
+            await client.send_message(chat_id, f"⚠️ اخطار به کاربر {sender_id}")
+        else:
+            logger.warning(f"دستور گارد نامعتبر: {command}")
+    except Exception as e:
+        logger.error(f"خطا در اجرای گارد: {e}")
+
+
+@register_action("backup")
+async def _handle_backup(rule, context: Dict[str, Any]):
+    """اجرای بکاپ‌گیری."""
+    try:
+        from .handlers.backup import _gather_config_snapshot
+        import json
+        from io import BytesIO
+        from datetime import datetime
+        
+        snapshot = await _gather_config_snapshot()
+        content = json.dumps(snapshot, ensure_ascii=False, indent=2)
+        bio = BytesIO(content.encode("utf-8"))
+        bio.name = f"auto_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        await client.send_file("me", bio, caption="🤖 بکاپ خودکار اتوماسیون")
+    except Exception as e:
+        logger.error(f"خطا در بکاپ: {e}")
+
+
+@register_action("autopost")
+async def _handle_autopost(rule, context: Dict[str, Any]):
+    """ارسال خودکار پیام."""
+    chat_id = context.get("chat_id")
+    if not chat_id:
+        return
+    try:
+        await client.send_message(chat_id, rule.action_value)
+    except Exception as e:
+        logger.error(f"خطا در ارسال خودکار: {e}")
+
+
 async def trigger_event(event_type: str, context: Dict[str, Any]):
     """
     اجرای قوانین منطبق با یک رویداد.
     """
-    rules = await automation_repo.get_rules_for_event(event_type, context)
+    try:
+        rules = await automation_repo.get_rules_for_event(event_type, context)
+    except Exception:
+        logger.exception("خطا در خواندن قوانین منطبق برای رویداد %s", event_type)
+        return
 
     if not rules:
         return
 
-    logger.info(f"اجرای {len(rules)} قانون برای رویداد {event_type}")
+    logger.debug("اجرای %d قانون برای رویداد %s", len(rules), event_type)
 
     for rule in rules:
         try:
@@ -168,6 +229,10 @@ async def _evaluate_condition(condition: str, context: Dict[str, Any]) -> bool:
     - "keyword in message" → بررسی وجود کلمه در پیام
     - "sender_id == 123" → بررسی فرستنده
     - "chat_id == 456" → بررسی چت
+    - "sender_id != 123" → بررسی نابرابری فرستنده
+    - "text contains keyword" → بررسی وجود کلمه در متن
+    - "text starts with prefix" → بررسی شروع متن با پیشوند
+    - "text ends with suffix" → بررسی پایان متن با پسوند
     """
     condition = condition.strip()
 
@@ -186,4 +251,29 @@ async def _evaluate_condition(condition: str, context: Dict[str, Any]) -> bool:
         if context_value is not None:
             return str(context_value) == right
 
-    return True  # شرط نامشخص → قبول
+    # بررسی شرط نابرابری
+    if "!=" in condition:
+        parts = condition.split("!=", 1)
+        left = parts[0].strip()
+        right = parts[1].strip().strip('"\'')
+        context_value = context.get(left)
+        if context_value is not None:
+            return str(context_value) != right
+
+    # بررسی شرط متن
+    if "text contains" in condition:
+        keyword = condition.replace("text contains", "").strip().strip('"\'')
+        message = context.get("text", "")
+        return keyword.lower() in message.lower()
+
+    if "text starts with" in condition:
+        prefix = condition.replace("text starts with", "").strip().strip('"\'')
+        message = context.get("text", "")
+        return message.startswith(prefix)
+
+    if "text ends with" in condition:
+        suffix = condition.replace("text ends with", "").strip().strip('"\'')
+        message = context.get("text", "")
+        return message.endswith(suffix)
+
+    return False  # شرط نامشخص → رد (امنیت: پیش‌فرض عدم اطمینان)

@@ -6,6 +6,7 @@
 - AI Memory (حافظه‌ی هوش مصنوعی)
 - Automation Rules (موتور اتوماسیون)
 - Settings (تنظیمات یکپارچه)
+- Message Tracker Channels (کانال‌های مقصدِ ردیابِ ویرایش/حذفِ پیام)
 """
 
 from __future__ import annotations
@@ -192,3 +193,14 @@ class HafezPoem(Base):
     poem: Mapped[str] = mapped_column(Text, nullable=False)  # ابیات، هر مصرع در یک خط
     interpretation: Mapped[str | None] = mapped_column(Text, nullable=True)
     alt_interpretation: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+# ------------------------------------------------- Message Edit/Delete Tracker ---
+class MessageTrackerChannel(Base):
+    """لیستِ کانال‌های مقصدِ ردیابِ ویرایش/حذفِ پیام (`.ردیاب`)."""
+
+    __tablename__ = "message_tracker_channels"
+
+    chat_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    added_at: Mapped[dt.datetime] = mapped_column(server_default=func.now(), nullable=False)

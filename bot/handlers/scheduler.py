@@ -39,7 +39,7 @@ _FULL_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})[ T](\d{1,2}):(\d{2})$")
 
 def _local_now() -> dt.datetime:
     """همون الگوی clock.py: زمانِ محلی به‌صورت naive datetime."""
-    return dt.datetime.utcnow() + dt.timedelta(hours=TIMEZONE_OFFSET)
+    return dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=TIMEZONE_OFFSET)
 
 
 def _to_utc_aware(local_dt: dt.datetime) -> dt.datetime:
@@ -230,6 +230,20 @@ async def scheduler_worker():
         for job in due:
             text = job.text if job.kind == "schedule" else f"🔔 **یادآوری**\n\n{job.text}"
             try:
+                # 🔥 اجرای رویداد اتوماسیون برای زمان‌بندی (قبل از ارسال)
+                try:
+                    from ..automation_engine import trigger_event
+                    context = {
+                        "chat_id": job.chat_id,
+                        "job_id": job.id,
+                        "text": job.text,
+                        "kind": job.kind,
+                        "run_at": job.run_at.isoformat(),
+                    }
+                    await trigger_event("schedule", context)
+                except Exception as e:
+                    logger.warning("خطا در اجرای رویداد schedule برای job %s: %s", job.id, e)
+
                 await client.send_message(job.chat_id, text)
             except errors.FloodWaitError as e:
                 await asyncio.sleep(e.seconds)

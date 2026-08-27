@@ -1,6 +1,6 @@
 # 🤖 سلف‌بات تلگرام فارسی (Telethon)
 
-سلف‌بات (Userbot) ماژولار و کامل برای اکانت شخصی تلگرام - بیش از صد دستور در ۲۹ دسته: از ابزارهای روزمره، سرگرمی و فونت گرفته تا هوش مصنوعی، اتوماسیون، مدیریت گروه، جستجوی جهانی و سیستم پلاگین.
+سلف‌بات (Userbot) ماژولار و کامل برای اکانت شخصی تلگرام - بیش از صد دستور در ۳۰ دسته: از ابزارهای روزمره، سرگرمی و فونت گرفته تا هوش مصنوعی، اتوماسیون، مدیریت گروه، جستجوی جهانی و سیستم پلاگین.
 
 نقطه‌ی اجرا `main.py` است و کل منطق در پوشه‌ی `bot/` به‌صورت ماژولار سازمان‌دهی شده (پیشوند پیش‌فرض دستورات: `.`).
 
@@ -50,6 +50,7 @@
 | ⚙️ تنظیمات یکپارچه | نمایش و تغییر سریع وضعیت همه‌ی زیرسیستم‌ها از یک‌جا |
 | ⚡ موتور اتوماسیون | قانون‌های event → action قابل تعریف توسط خودتون |
 | 🔔 مرکز اعلان‌ها | قانون بر اساس کلیدواژه/فرستنده → نوتیف/ذخیره/فوروارد/پاسخ خودکار |
+| 🕵️ ردیابِ ویرایش/حذفِ پیام | وقتی طرفِ پیوی/گروه/کانال پیامِ قبلاً دیده‌شده رو ویرایش یا حذف کنه، نسخه‌ی قبلی به کانالِ لاگِ شما فرستاده می‌شه |
 | 📥 اینباکس | ذخیره‌ی دستیِ پیام‌های مهم برای مرور بعدی |
 | 🧠 حافظه‌ی AI | حافظه‌ی دسته‌بندی‌شده (کاربران/گفتگوها/پروژه‌ها/یادداشت‌ها/تنظیمات) |
 | 👤 پروفایل کاربر | تگ و یادداشت خصوصی روی کاربران دیگر |
@@ -93,6 +94,7 @@ bot/
   health.py                      جمع‌آوری و قالب‌بندی گزارش سلامت سیستم
   local_speech.py                رونویسی رایگان (Google STT) و متن‌به‌صوت رایگان (edge-tts)
   logging_config.py              پیکربندی لاگ
+  self_delete_registry.py        هماهنگیِ حذفِ عمدیِ خودمون (`.حذف`/`.پاکسازی`) با ردیابِ ویرایش/حذف
 
   db/                            اتصال PostgreSQL (SQLAlchemy 2.x async + psycopg 3)
     engine.py, models.py, models_ext.py, bootstrap.py
@@ -101,12 +103,12 @@ bot/
     notes_repo.py, assistant_repo.py, autopost_repo.py, font_repo.py, clock_repo.py,
     stats_repo.py, scheduler_repo.py, group_guard_repo.py, hafez_repo.py,
     notification_repo.py, automation_repo.py, ai_memory_repo.py, user_profile_repo.py,
-    inbox_repo.py, daily_digest_repo.py, settings_repo.py
+    inbox_repo.py, daily_digest_repo.py, settings_repo.py, message_tracker_repo.py
 
   storage/                       آداپتورهای async روی Repository Layer + state درون‌حافظه‌ای
     notes_store.py, font_store.py, assistant_store.py, autopost_store.py, clock_store.py,
     stats_store.py, scheduler_store.py, group_guard_store.py, daily_digest_store.py,
-    settings_toggles.py, json_file.py
+    settings_toggles.py, json_file.py, message_tracker_store.py
 
   handlers/                      هر فایل یک دسته از دستورات؛ افزودنِ دستور جدید یعنی فقط
                                   باز کردنِ فایلِ مربوطه (یا فایل جدید + اضافه‌کردن به __init__.py)
@@ -124,6 +126,7 @@ bot/
     settings_center.py  تنظیمات یکپارچه
     automation.py       موتور اتوماسیون
     notifications.py    مرکز اعلان‌ها
+    message_tracker.py   ردیابِ ویرایش/حذفِ پیام
     inbox.py            اینباکس داخلی
     ai_memory.py        حافظه‌ی هوش مصنوعی
     user_profile.py     پروفایل داخلی روی کاربران دیگر
@@ -143,7 +146,7 @@ bot/
     __init__.py             ثبت/import همه‌ی هندلرهای بالا
 
 migrations/                      مهاجرت‌های Alembic (اسکیمای PostgreSQL)
-  versions/0001_initial_schema.py … 0009_assistant_schedule.py
+  versions/0001_initial_schema.py … 0010_message_tracker.py
 
 scripts/
   migrate_json_to_postgres.py    انتقال یک‌بارِ JSONهای قدیمی به PostgreSQL (با بکاپ و شمارش قبل/بعد)
@@ -152,7 +155,7 @@ scripts/
 plugins/                         پلاگین‌های داخلیِ (built-in) کنار bot/ - جدا از پلاگین‌های نصب‌شده در runtime
   README.md                      مستندات فرمت پلاگین (انگلیسی)
 
-tests/                           ۹۱۸ خط تست با pytest + pytest-asyncio (۱۳ فایل)
+tests/                           ۹۵۳ خط تست با pytest + pytest-asyncio (۱۵ فایل)
 ```
 
 ---
@@ -424,6 +427,17 @@ docker run --env-file .env telegram-selfbot
 نوع: `message, keyword, user` (شناسه‌ی عددیِ فرستنده) | عملیات: `notify` (پیام به خودتون)، `save` (ذخیره در اینباکس)، `forward` (فوروارد به خودتون)، `reply` (پاسخِ خودکار در همون چت)
 ⚠️ نوعِ `time` فعلاً پشتیبانی نمی‌شه (نیازمندِ زمان‌بندِ جداگانه‌ست).
 
+### 🕵️ ردیابِ ویرایش/حذفِ پیام
+```
+.ردیاب                              وضعیت + راهنما
+.ردیاب روشن/خاموش
+.ردیاب تنظیم <chat_id>              لیستِ مقصدها رو پاک می‌کنه و فقط همین یکی رو می‌ذاره
+.ردیاب افزودن <chat_id>             به لیستِ مقصدها اضافه می‌کنه
+.ردیاب حذف <chat_id>
+.ردیاب پاک                          کلِ لیستِ مقصدها
+```
+با `events.MessageEdited`/`events.MessageDeleted` تلتون: هر پیامِ *ورودی* (نه پیامِ خودِ owner) که می‌بینه رو موقتاً کش می‌کنه؛ اگه بعداً فرستنده اون پیام رو ویرایش یا حذف کنه، نسخه‌ی قبلی‌ش به کانال(های) بالا فرستاده می‌شه - در پیوی فقط متن/رسانه + نامِ فرستنده، در گروه/کانال + نامِ همون گروه/کانال هم اضافه می‌شه. برای تنظیمِ سریع، دستور رو داخلِ خودِ کانال/گروهِ مقصد (بدونِ آرگومان) بفرستید. کشِ پیام‌ها فقط توی حافظه‌ست (با ری‌استارت پاک می‌شه، دقیقاً مثلِ حافظه‌ی مکالمه‌ی منشی)؛ فقط لیستِ کانال‌های مقصد در PostgreSQL دائمیه. حذف‌های عمدیِ خودتون با `.حذف`/`.پاکسازی` گزارش نمی‌شن (فقط حذف/ویرایشِ واقعیِ طرفِ مقابل).
+
 ### 📥 اینباکس
 ```
 .ذخیره                                (با ریپلای) ذخیره در اینباکسِ داخلی؛ اختیاری: مهم/فوری
@@ -561,7 +575,7 @@ docker run --env-file .env telegram-selfbot
 
 ## ۸) پایگاه‌داده و مهاجرت
 
-از این نسخه به بعد **PostgreSQL منبعِ اصلیِ همه‌ی داده‌های دائمیه** (یادداشت‌ها/منشی/ارسالِ‌خودکار/آمار/ساعتِ زنده/اتوماسیون/اعلان/اینباکس/حافظه‌ی AI/پروفایلِ کاربر/خلاصه‌ی روزانه)، نه فایلِ JSON. مهاجرتِ اسکیما با Alembic مدیریت می‌شه:
+از این نسخه به بعد **PostgreSQL منبعِ اصلیِ همه‌ی داده‌های دائمیه** (یادداشت‌ها/منشی/ارسالِ‌خودکار/آمار/ساعتِ زنده/اتوماسیون/اعلان/اینباکس/حافظه‌ی AI/پروفایلِ کاربر/خلاصه‌ی روزانه/کانال‌های مقصدِ ردیابِ ویرایش‌وحذف)، نه فایلِ JSON. مهاجرتِ اسکیما با Alembic مدیریت می‌شه:
 
 ```
 migrations/versions/
@@ -574,6 +588,7 @@ migrations/versions/
   0007_group_filters.py
   0008_daily_digest.py
   0009_assistant_schedule.py
+  0010_message_tracker.py
 ```
 
 دستورِ `alembic upgrade head` قبل از هر اجرای بات (در Dockerfile/Procfile) خودکار صدا زده می‌شه.
@@ -623,7 +638,7 @@ async def shutdown():
 
 ## ۱۰) تست‌ها
 
-پروژه یک مجموعه‌تستِ ۹۱۸ خطی با `pytest` + `pytest-asyncio` (حالتِ `asyncio_mode = auto`) داره که Repository Layer، پارسِ زمانِ زمان‌بند، روترِ دستوری، مهاجرتِ JSON→Postgres و اتصالِ دیتابیس رو پوشش می‌ده:
+پروژه یک مجموعه‌تستِ ۹۵۳ خطی با `pytest` + `pytest-asyncio` (حالتِ `asyncio_mode = auto`) داره که Repository Layer، پارسِ زمانِ زمان‌بند، روترِ دستوری، مهاجرتِ JSON→Postgres و اتصالِ دیتابیس رو پوشش می‌ده:
 
 ```bash
 pip install -r requirements-dev.txt

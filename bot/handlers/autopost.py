@@ -125,6 +125,7 @@ async def autopost_handler(event):
 
 async def autopost_worker():
     from .. import health
+    from ..rate_limiter import outgoing_limiter
     while True:
         await asyncio.sleep(5)
         health.update_worker_status("autopost", "ok")
@@ -134,9 +135,11 @@ async def autopost_worker():
             set_force_now(False)
             for chat_id_str in list(autopost_state["chats"].keys()):
                 try:
+                    await outgoing_limiter.wait("autopost")
                     await client.send_message(int(chat_id_str), autopost_state["text"])
                     STATS["autopost_ok"] += 1
                 except errors.FloodWaitError as e:
+                    logger.warning("FloodWait در ارسال خودکار: %s ثانیه صبر", e.seconds)
                     await asyncio.sleep(e.seconds)
                 except Exception:
                     logger.exception("خطا در ارسال خودکار به %s", chat_id_str)
