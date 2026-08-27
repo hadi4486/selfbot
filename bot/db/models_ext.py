@@ -293,3 +293,16 @@ class GroupActivityLog(Base):
     created_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+# ---------------------------------------------- Message Tracker Channels ---
+class MessageTrackerChannel(Base):
+    """لیستِ کانال‌های مقصدِ ردیابِ ویرایش/حذفِ پیام (`.ردیاب`)."""
+
+    __tablename__ = "message_tracker_channels"
+
+    chat_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    added_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )

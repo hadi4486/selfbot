@@ -12,6 +12,7 @@ from . import (
     autopost,
     backup,
     command_router,
+    convert,
     daily_digest,
     font,
     fun,
@@ -22,10 +23,13 @@ from . import (
     messages,
     notes,
     ocr,
+    ocr_translate,
     panel,
+    poll,
     profile,
     scheduler,
     stats,
+    stats_graph,
     tools,
 )
 
@@ -41,4 +45,5 @@ from . import (
     notifications,
     automation,
     plugins_cmd,
+    message_tracker,
 )
