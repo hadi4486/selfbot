@@ -4,7 +4,6 @@
 
 import json
 from telethon import events
-from telethon.tl.functions.messages import SendPollVoteRequest
 
 from ..config import PREFIX
 from ..runtime import client

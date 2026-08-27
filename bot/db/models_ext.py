@@ -295,6 +295,32 @@ class GroupActivityLog(Base):
     )
 
 
+# --------------------------------------------------------- Group Polls ---
+class GroupPoll(Base):
+    """نظرسنجی‌های ساخته‌شده با `.نظرسنجی` (برای بستن/جمع‌بندیِ بعدی)."""
+
+    __tablename__ = "group_polls"
+    __table_args__ = (
+        Index("ix_group_polls_chat_id", "chat_id"),
+        Index("ix_group_polls_created_at", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    message_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    poll_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    options: Mapped[str] = mapped_column(Text, nullable=False)  # JSON list
+    total_votes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    closed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
 # ---------------------------------------------- Message Tracker Channels ---
 class MessageTrackerChannel(Base):
     """لیستِ کانال‌های مقصدِ ردیابِ ویرایش/حذفِ پیام (`.ردیاب`)."""

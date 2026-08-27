@@ -6,6 +6,7 @@ pillow
 edge-tts
 SpeechRecognition
 pytesseract
+matplotlib
 
 # --- PostgreSQL persistence layer ---
 sqlalchemy>=2.0,<3.0
