@@ -52,6 +52,30 @@ from ..storage.group_guard_store import (
     set_welcome_enabled,
     set_welcome_text,
 )
+from ..storage.word_filter_store import (
+    add_word_filter,
+    remove_word_filter,
+    get_word_filters,
+    clear_word_filters,
+    search_word_in_filters,
+)
+from ..storage.warn_store import (
+    add_warn,
+    remove_warn,
+    clear_warnings,
+    get_user_warnings,
+    list_warnings,
+    get_warn_settings,
+    update_warn_settings,
+)
+from ..storage.activity_store import (
+    increment_messages,
+    increment_warnings,
+    increment_deleted,
+    increment_joined,
+    increment_left,
+    get_summary,
+)
 from ..storage.stats_store import record_error as _record_error
 from ..utils import pat
 
@@ -619,3 +643,341 @@ async def spamfilter_watcher(event):
         except Exception:
             _record_error()
             logger.exception("خطا در ارسالِ هشدارِ اسپم")
+
+
+# ------------------------------------------------------------ فیلتر کلمات ممنوعه سفارشی ---
+@client.on(events.NewMessage(outgoing=True, pattern=pat(["فیلترکلمه", "wordfilter"])))
+async def wordfilter_cmd_handler(event):
+    if not event.is_group:
+        return await event.edit("این دستور فقط توی گروه‌ها کار می‌کنه")
+
+    raw = (event.pattern_match.group(1) or "").strip()
+    parts = raw.split(maxsplit=1)
+    sub = parts[0].lower() if parts else ""
+    rest = parts[1] if len(parts) > 1 else ""
+    chat_id = event.chat_id
+
+    if not sub:
+        filters = await get_word_filters(chat_id)
+        if not filters:
+            return await event.edit(
+                f"📋 **فیلتر کلمات ممنوعه**\n\n"
+                f"هیچ کلمه‌ای تعریف نشده.\n\n"
+                f"دستورات:\n"
+                f"`{PREFIX}فیلترکلمه افزودن <کلمه> [حذف/اخطار/بن]`\n"
+                f"`{PREFIX}فیلترکلمه حذف <کلمه>`\n"
+                f"`{PREFIX}فیلترکلمه لیست`\n"
+                f"`{PREFIX}فیلترکلمه پاک`"
+            )
+        lines = ["📋 **لیست کلمات ممنوعه**\n"]
+        for f in filters:
+            action_label = {"delete": "حذف", "warn": "اخطار", "ban": "بن"}.get(f.action, f.action)
+            lines.append(f"• `{f.word}` → {action_label}")
+        await event.edit("\n".join(lines))
+        return
+
+    if sub in ("افزودن", "add"):
+        args = rest.split(maxsplit=1)
+        if not args:
+            return await event.edit(f"مثال: `{PREFIX}فیلترکلمه افزودن کلمه‌ممنوع حذف`")
+        word = args[0]
+        action = args[1].lower() if len(args) > 1 else "delete"
+        if action not in ("delete", "warn", "ban"):
+            return await event.edit("اقدام باید یکی از: delete, warn, ban باشد.")
+        try:
+            await add_word_filter(chat_id, word, action)
+            await event.edit(f"✅ کلمه `{word}` با اقدام `{action}` اضافه شد.")
+        except ValueError as e:
+            await event.edit(f"❌ {e}")
+        return
+
+    if sub in ("حذف", "remove"):
+        if not rest:
+            return await event.edit(f"مثال: `{PREFIX}فیلترکلمه حذف کلمه‌ممنوع`")
+        word = rest.strip()
+        success = await remove_word_filter(chat_id, word)
+        if success:
+            await event.edit(f"✅ کلمه `{word}` حذف شد.")
+        else:
+            await event.edit(f"❌ کلمه `{word}` در لیست وجود ندارد.")
+        return
+
+    if sub in ("لیست", "list"):
+        filters = await get_word_filters(chat_id)
+        if not filters:
+            return await event.edit("لیست کلمات ممنوعه خالی است.")
+        lines = ["📋 **لیست کلمات ممنوعه**\n"]
+        for f in filters:
+            action_label = {"delete": "حذف", "warn": "اخطار", "ban": "بن"}.get(f.action, f.action)
+            lines.append(f"• `{f.word}` → {action_label}")
+        await event.edit("\n".join(lines))
+        return
+
+    if sub in ("پاک", "clear"):
+        count = await clear_word_filters(chat_id)
+        await event.edit(f"🗑 {count} کلمه ممنوعه پاک شد.")
+        return
+
+    await event.edit(f"دستور نامعتبر. برای راهنما: `{PREFIX}فیلترکلمه`")
+
+
+@client.on(events.NewMessage(incoming=True))
+async def wordfilter_watcher(event):
+    if not event.is_group:
+        return
+    chat_id = event.chat_id
+    sender_id = event.sender_id
+    if sender_id is None or sender_id == runtime.SELF_ID:
+        return
+    if await _is_admin_or_creator(chat_id, sender_id):
+        return
+    text = event.raw_text or ""
+    if not text:
+        return
+    matched = await search_word_in_filters(chat_id, text)
+    if not matched:
+        return
+    action = matched[0].action
+    try:
+        if action == "delete":
+            await event.delete()
+        elif action == "warn":
+            await client.send_message(
+                chat_id,
+                f"⚠️ {sender_id} لطفاً از کلمات ممنوعه استفاده نکنید.",
+                reply_to=event.id
+            )
+        elif action == "ban":
+            await client.ban_participant(chat_id, sender_id)
+            await client.send_message(chat_id, f"🚫 کاربر {sender_id} به دلیل استفاده از کلمه ممنوعه بن شد.")
+    except Exception as e:
+        _record_error()
+        logger.exception("خطا در اعمال فیلتر کلمه: %s", e)
+
+
+# ------------------------------------------------------------ سیستم هشدار تدریجی ---
+@client.on(events.NewMessage(outgoing=True, pattern=pat(["اخطار", "warn"])))
+async def warn_cmd_handler(event):
+    if not event.is_group:
+        return await event.edit("این دستور فقط توی گروه‌ها کار می‌کنه")
+
+    raw = (event.pattern_match.group(1) or "").strip()
+    parts = raw.split(maxsplit=1)
+    sub = parts[0].lower() if parts else ""
+    rest = parts[1] if len(parts) > 1 else ""
+    chat_id = event.chat_id
+
+    if not sub:
+        settings = await get_warn_settings(chat_id)
+        status = "روشن ✅" if settings.enabled else "خاموش ❌"
+        return await event.edit(
+            f"⚖️ **سیستم هشدار تدریجی**\n"
+            f"وضعیت: {status}\n"
+            f"حد هشدار: {settings.warn_limit}\n"
+            f"اقدام در حد: {settings.action_on_limit}\n"
+            f"مدت سکوت: {settings.mute_duration_minutes} دقیقه\n"
+            f"بازنشانی خودکار: {settings.auto_reset_days} روز\n\n"
+            f"دستورات:\n"
+            f"`{PREFIX}اخطار افزودن <آیدی/یوزر> [دلیل]`\n"
+            f"`{PREFIX}اخطار حذف <آیدی/یوزر>`\n"
+            f"`{PREFIX}اخطار پاک <آیدی/یوزر>`\n"
+            f"`{PREFIX}اخطار لیست`\n"
+            f"`{PREFIX}اخطار تنظیمات <کلید> <مقدار>`"
+        )
+
+    if sub in ("افزودن", "add"):
+        args = rest.split(maxsplit=1)
+        if not args:
+            return await event.edit(f"مثال: `{PREFIX}اخطار افزودن @username دلیل`")
+        target = args[0]
+        reason = args[1] if len(args) > 1 else "بدون دلیل"
+        # پیدا کردن کاربر
+        try:
+            if target.startswith("@") or target.isdigit():
+                user = await client.get_entity(target)
+            else:
+                return await event.edit("لطفاً آیدی عددی یا یوزرنیم را وارد کنید.")
+        except Exception:
+            return await event.edit("کاربر پیدا نشد.")
+        user_id = user.id
+        # افزودن هشدار
+        warn_obj = await add_warn(chat_id, user_id)
+        settings = await get_warn_settings(chat_id)
+        msg = f"⚠️ به کاربر {user.first_name or user_id} یک هشدار اضافه شد. (تعداد: {warn_obj.warn_count})"
+        if settings.enabled and warn_obj.warn_count >= settings.warn_limit:
+            # اجرای اقدام خودکار
+            action = settings.action_on_limit
+            try:
+                if action == "mute":
+                    duration = settings.mute_duration_minutes
+                    await client.edit_permissions(chat_id, user_id, until_date=dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=duration), send_messages=False)
+                    msg += f" 🚫 کاربر به مدت {duration} دقیقه بی‌صدا شد."
+                elif action == "kick":
+                    await client.kick_participant(chat_id, user_id)
+                    msg += " 🚫 کاربر از گروه اخراج شد."
+                elif action == "ban":
+                    await client.ban_participant(chat_id, user_id)
+                    msg += " 🚫 کاربر از گروه بن شد."
+            except Exception as e:
+                _record_error()
+                logger.exception("خطا در اعمال اقدام خودکار: %s", e)
+                msg += " ❌ خطا در اعمال اقدام خودکار."
+        await event.edit(msg)
+        return
+
+    if sub in ("حذف", "remove"):
+        if not rest:
+            return await event.edit(f"مثال: `{PREFIX}اخطار حذف @username`")
+        target = rest.strip()
+        try:
+            if target.startswith("@") or target.isdigit():
+                user = await client.get_entity(target)
+            else:
+                return await event.edit("لطفاً آیدی عددی یا یوزرنیم را وارد کنید.")
+        except Exception:
+            return await event.edit("کاربر پیدا نشد.")
+        success = await remove_warn(chat_id, user.id)
+        if success:
+            await event.edit(f"✅ یک هشدار از کاربر {user.first_name or user.id} کم شد.")
+        else:
+            await event.edit(f"⚠️ کاربر هیچ هشداری نداشت.")
+        return
+
+    if sub in ("پاک", "clear"):
+        if not rest:
+            return await event.edit(f"مثال: `{PREFIX}اخطار پاک @username`")
+        target = rest.strip()
+        try:
+            if target.startswith("@") or target.isdigit():
+                user = await client.get_entity(target)
+            else:
+                return await event.edit("لطفاً آیدی عددی یا یوزرنیم را وارد کنید.")
+        except Exception:
+            return await event.edit("کاربر پیدا نشد.")
+        success = await clear_warnings(chat_id, user.id)
+        if success:
+            await event.edit(f"✅ همه هشدارهای کاربر {user.first_name or user.id} پاک شد.")
+        else:
+            await event.edit(f"⚠️ کاربر هیچ هشداری نداشت.")
+        return
+
+    if sub in ("لیست", "list"):
+        warnings = await list_warnings(chat_id)
+        if not warnings:
+            return await event.edit("هیچ هشداری در این گروه ثبت نشده.")
+        lines = ["📋 **لیست هشدارها**\n"]
+        for w in warnings[:20]:
+            try:
+                user = await client.get_entity(w.user_id)
+                name = user.first_name or str(w.user_id)
+            except Exception:
+                name = str(w.user_id)
+            lines.append(f"• {name}: {w.warn_count} هشدار")
+        if len(warnings) > 20:
+            lines.append(f"\n... و {len(warnings) - 20} مورد دیگر.")
+        await event.edit("\n".join(lines))
+        return
+
+    if sub in ("تنظیمات", "settings"):
+        args = rest.split(maxsplit=1)
+        if len(args) < 2:
+            return await event.edit(
+                f"مثال: `{PREFIX}اخطار تنظیمات warn_limit 3`\n"
+                f"کلیدهای قابل تنظیم: enabled, warn_limit, action_on_limit (mute/kick/ban), mute_duration_minutes, auto_reset_days"
+            )
+        key = args[0].lower()
+        value = args[1]
+        # تبدیل مقدار
+        if key == "enabled":
+            val = value.lower() in ("true", "on", "1", "روشن")
+            await update_warn_settings(chat_id, enabled=val)
+            await event.edit(f"✅ وضعیت سیستم هشدار: {'روشن' if val else 'خاموش'}")
+        elif key == "warn_limit":
+            try:
+                val = int(value)
+                await update_warn_settings(chat_id, warn_limit=val)
+                await event.edit(f"✅ حد هشدار به {val} تغییر کرد.")
+            except ValueError:
+                await event.edit("❌ مقدار باید عدد باشد.")
+        elif key == "action_on_limit":
+            if value not in ("mute", "kick", "ban"):
+                return await event.edit("❌ اقدام باید یکی از mute, kick, ban باشد.")
+            await update_warn_settings(chat_id, action_on_limit=value)
+            await event.edit(f"✅ اقدام در حد هشدار به {value} تغییر کرد.")
+        elif key == "mute_duration_minutes":
+            try:
+                val = int(value)
+                await update_warn_settings(chat_id, mute_duration_minutes=val)
+                await event.edit(f"✅ مدت سکوت به {val} دقیقه تغییر کرد.")
+            except ValueError:
+                await event.edit("❌ مقدار باید عدد باشد.")
+        elif key == "auto_reset_days":
+            try:
+                val = int(value)
+                await update_warn_settings(chat_id, auto_reset_days=val)
+                await event.edit(f"✅ بازنشانی خودکار به {val} روز تغییر کرد.")
+            except ValueError:
+                await event.edit("❌ مقدار باید عدد باشد.")
+        else:
+            await event.edit(f"❌ کلید نامعتبر. کلیدهای مجاز: enabled, warn_limit, action_on_limit, mute_duration_minutes, auto_reset_days")
+        return
+
+    await event.edit(f"دستور نامعتبر. برای راهنما: `{PREFIX}اخطار`")
+
+
+# ------------------------------------------------------------ گزارش روزانه فعالیت گروه ---
+@client.on(events.NewMessage(outgoing=True, pattern=pat(["گزارش", "report"])))
+async def report_cmd_handler(event):
+    if not event.is_group:
+        return await event.edit("این دستور فقط توی گروه‌ها کار می‌کنه")
+
+    raw = (event.pattern_match.group(1) or "").strip()
+    sub = raw.lower() if raw else ""
+    chat_id = event.chat_id
+
+    if sub in ("امروز", "today"):
+        summary = await get_summary(chat_id, days=1)
+        days = 1
+        label = "امروز"
+    elif sub in ("هفته", "week"):
+        summary = await get_summary(chat_id, days=7)
+        days = 7
+        label = "۷ روز اخیر"
+    elif sub.isdigit():
+        days = int(sub)
+        if days < 1:
+            return await event.edit("تعداد روز باید حداقل ۱ باشد.")
+        if days > 30:
+            return await event.edit("حداکثر ۳۰ روز قابل گزارش است.")
+        summary = await get_summary(chat_id, days=days)
+        label = f"{days} روز اخیر"
+    else:
+        # نمایش راهنما
+        summary = await get_summary(chat_id, days=1)
+        return await event.edit(
+            f"📊 **گزارش فعالیت گروه**\n\n"
+            f"برای دریافت گزارش، از زیردستورهای زیر استفاده کن:\n"
+            f"`{PREFIX}گزارش امروز` — گزارش امروز\n"
+            f"`{PREFIX}گزارش هفته` — گزارش ۷ روز اخیر\n"
+            f"`{PREFIX}گزارش <تعداد روز>` — گزارش تعداد روز دلخواه (حداکثر ۳۰)\n\n"
+            f"**آمار امروز:**\n"
+            f"• پیام‌ها: {summary['total_messages']}\n"
+            f"• هشدارها: {summary['total_warnings']}\n"
+            f"• پیام‌های حذف‌شده: {summary['total_deleted']}\n"
+            f"• اعضای جدید: {summary['total_joined']}\n"
+            f"• اعضای خارج‌شده: {summary['total_left']}"
+        )
+
+    # نمایش گزارش
+    lines = [
+        f"📊 **گزارش فعالیت گروه** ({label})",
+        "",
+        f"📨 پیام‌های ارسال‌شده: **{summary['total_messages']}**",
+        f"⚠️ هشدارها: **{summary['total_warnings']}**",
+        f"🗑 پیام‌های حذف‌شده: **{summary['total_deleted']}**",
+        f"➕ اعضای جدید: **{summary['total_joined']}**",
+        f"➖ اعضای خارج‌شده: **{summary['total_left']}**",
+        "",
+        f"📆 تعداد روزهای گزارش‌شده: {summary['days']}"
+    ]
+    await event.edit("\n".join(lines))

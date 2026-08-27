@@ -52,7 +52,6 @@ from bot.clock import clock_updater
 from bot.handlers.autopost import autopost_worker
 from bot.handlers.assistant import assistant_status_watcher
 from bot.handlers.daily_digest import daily_digest_worker
-from bot.handlers.message_tracker import message_tracker_cleanup_worker
 from bot.handlers.scheduler import scheduler_worker
 from bot.handlers.stats import stats_saver
 
@@ -104,7 +103,6 @@ async def main():
     asyncio.create_task(scheduler_worker())
     asyncio.create_task(daily_digest_worker())
     asyncio.create_task(stats_saver())
-    asyncio.create_task(message_tracker_cleanup_worker())
     try:
         await client.run_until_disconnected()
     finally:

@@ -41,5 +41,4 @@ from . import (
     notifications,
     automation,
     plugins_cmd,
-    message_tracker,
 )

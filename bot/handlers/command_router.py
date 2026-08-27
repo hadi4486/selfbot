@@ -468,23 +468,6 @@ class _AssistantToggle:
         label = {"on": "روشن ✅", "off": "خاموش ❌", "auto": "خودکار 🔄"}[state]
         return f"🤖 منشیِ چت: {label}"
 
-# 🔥 اضافه کردن رویداد command به موتور اتوماسیون
-# این تابع هر دستور خروجی را به موتور اتوماسیون ارسال می‌کند
-async def trigger_command_event(event, command_name: str, args: str = ""):
-    try:
-        from ..automation_engine import trigger_event
-        context = {
-            "chat_id": event.chat_id,
-            "message_id": event.id,
-            "sender_id": event.sender_id,
-            "command": command_name,
-            "args": args,
-            "text": event.raw_text or "",
-        }
-        await trigger_event("command", context)
-    except Exception as e:
-        logger.debug("خطا در اجرای رویداد command برای %s: %s", command_name, e)
-
 
 # --------------------------------------------------------- خلاصه‌ی روزانه ---
 @_register(

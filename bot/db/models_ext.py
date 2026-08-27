@@ -6,7 +6,8 @@
 - AI Memory (حافظه‌ی هوش مصنوعی)
 - Automation Rules (موتور اتوماسیون)
 - Settings (تنظیمات یکپارچه)
-- Message Tracker Channels (کانال‌های مقصدِ ردیابِ ویرایش/حذفِ پیام)
+- Word Filter (فیلتر کلمات ممنوعه سفارشی)
+- Gradual Warn System (سیستم هشدار تدریجی)
 """
 
 from __future__ import annotations
@@ -195,12 +196,100 @@ class HafezPoem(Base):
     alt_interpretation: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
-# ------------------------------------------------- Message Edit/Delete Tracker ---
-class MessageTrackerChannel(Base):
-    """لیستِ کانال‌های مقصدِ ردیابِ ویرایش/حذفِ پیام (`.ردیاب`)."""
+# ------------------------------------------------------------ Word Filter (Group) ---
+class GroupWordFilter(Base):
+    """فیلتر کلمات ممنوعه سفارشی به‌ازای هر گروه."""
 
-    __tablename__ = "message_tracker_channels"
+    __tablename__ = "group_word_filters"
+    __table_args__ = (
+        UniqueConstraint("chat_id", "word", name="uq_group_word_filters_chat_word"),
+        Index("ix_group_word_filters_chat_id", "chat_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    word: Mapped[str] = mapped_column(Text, nullable=False)
+    action: Mapped[str] = mapped_column(String(16), nullable=False, default="delete")  # delete, warn, ban
+    case_sensitive: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_regex: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+# ------------------------------------------------------- Gradual Warn System ---
+class GroupUserWarning(Base):
+    """شمارش هشدارهای هر کاربر در هر گروه."""
+
+    __tablename__ = "group_user_warnings"
+    __table_args__ = (
+        UniqueConstraint("chat_id", "user_id", name="uq_group_user_warnings_chat_user"),
+        Index("ix_group_user_warnings_chat_id", "chat_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    warn_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_warn_time: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    muted_until: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    kicked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    banned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class GroupWarnSettings(Base):
+    """تنظیمات سیستم هشدار تدریجی برای هر گروه."""
+
+    __tablename__ = "group_warn_settings"
+    __table_args__ = (
+        UniqueConstraint("chat_id", name="uq_group_warn_settings_chat_id"),
+    )
 
     chat_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    title: Mapped[str] = mapped_column(Text, nullable=False)
-    added_at: Mapped[dt.datetime] = mapped_column(server_default=func.now(), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    warn_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    action_on_limit: Mapped[str] = mapped_column(String(16), nullable=False, default="mute")  # mute, kick, ban
+    mute_duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
+    auto_reset_days: Mapped[int] = mapped_column(Integer, nullable=False, default=7)
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+# ------------------------------------------------------- Group Activity Log ---
+class GroupActivityLog(Base):
+    """لاگ فعالیت روزانه گروه برای گزارش‌ها."""
+
+    __tablename__ = "group_activity_log"
+    __table_args__ = (
+        Index("ix_group_activity_log_chat_id", "chat_id"),
+        Index("ix_group_activity_log_date", "log_date"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    log_date: Mapped[str] = mapped_column(String(10), nullable=False)  # YYYY-MM-DD
+    messages_sent: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    warnings_given: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    messages_deleted: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    members_joined: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    members_left: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
