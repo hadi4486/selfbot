@@ -29,6 +29,7 @@
 """
 import asyncio
 import base64
+import datetime as dt
 import logging
 import re
 import time
@@ -44,10 +45,12 @@ from ..storage.group_guard_store import (
     group_guard_state,
     is_link_filter_enabled,
     is_porn_filter_enabled,
+    is_profanity_filter_enabled,
     is_spam_filter_enabled,
     is_welcome_enabled,
     set_link_filter,
     set_porn_filter,
+    set_profanity_filter,
     set_spam_filter,
     set_welcome_enabled,
     set_welcome_text,
@@ -462,33 +465,55 @@ async def welcome_cmd_handler(event):
 
 @client.on(events.ChatAction)
 async def welcome_watcher(event):
-    if not (event.user_joined or event.user_added):
-        return
     chat_id = event.chat_id
-    if chat_id is None or not is_welcome_enabled(chat_id):
-        return
-    try:
-        users = await event.get_users()
-    except Exception:
-        return
-    if not users:
+    if chat_id is None or not event.is_group:
         return
 
-    template = get_welcome_text(chat_id)
-    for user in users:
-        if getattr(user, "bot", False) or user.id == runtime.SELF_ID:
-            continue
-        name = f"{user.first_name or ''} {user.last_name or ''}".strip() or (
-            user.username or str(user.id)
-        )
-        mention = f"[{name}](tg://user?id={user.id})"
-        text = template.replace("{نام}", name).replace("{name}", name)
-        text = text.replace("{منشن}", mention).replace("{mention}", mention)
+    if event.user_joined or event.user_added:
         try:
-            await client.send_message(chat_id, text, parse_mode="markdown")
+            users = await event.get_users()
         except Exception:
-            _record_error()
-            logger.exception("خطا در ارسالِ پیامِ خوش‌آمدگویی")
+            users = []
+        real_users = [u for u in users if not getattr(u, "bot", False) and u.id != runtime.SELF_ID]
+        if real_users:
+            await increment_joined(chat_id, len(real_users))
+        if is_welcome_enabled(chat_id) and real_users:
+            template = get_welcome_text(chat_id)
+            for user in real_users:
+                name = f"{user.first_name or ''} {user.last_name or ''}".strip() or (
+                    user.username or str(user.id)
+                )
+                mention = f"[{name}](tg://user?id={user.id})"
+                text = template.replace("{نام}", name).replace("{name}", name)
+                text = text.replace("{منشن}", mention).replace("{mention}", mention)
+                try:
+                    await client.send_message(chat_id, text, parse_mode="markdown")
+                except Exception:
+                    _record_error()
+                    logger.exception("خطا در ارسالِ پیامِ خوش‌آمدگویی")
+        return
+
+    if event.user_left or event.user_kicked:
+        try:
+            users = await event.get_users()
+        except Exception:
+            users = []
+        real_users = [u for u in users if not getattr(u, "bot", False) and u.id != runtime.SELF_ID]
+        if real_users:
+            await increment_left(chat_id, len(real_users))
+        return
+
+
+# ---------------------------------------------------------- شمارشِ پیام‌ها ---
+@client.on(events.NewMessage(incoming=True))
+async def activity_message_counter(event):
+    if not event.is_group:
+        return
+    try:
+        await increment_messages(event.chat_id)
+    except Exception:
+        _record_error()
+        logger.exception("خطا در ثبتِ آمارِ پیام")
 
 
 # ------------------------------------------------------------ برچسب‌همه ---
@@ -645,6 +670,91 @@ async def spamfilter_watcher(event):
             logger.exception("خطا در ارسالِ هشدارِ اسپم")
 
 
+# ---------------------------------------------------------------- فیلترِ فحش ---
+# لیستِ پایه‌ی کلماتِ رکیک/توهین‌آمیزِ رایج (فارسی + چندتا معادلِ انگلیسی) - برای
+# تشخیصِ خودکار، بدونِ نیاز به AI و بدونِ نیاز به این‌که خودِ ادمین دستی کلمه‌به‌کلمه
+# اضافه کنه (بر خلافِ `.فیلترکلمه` که کاملاً سفارشیه). این یه لیستِ پایه‌ست، نه
+# جامع؛ در صورتِ نیاز به کلماتِ بیشتر/خاص‌ترِ یه گروه، همون `.فیلترکلمه` مکمّلشه.
+PROFANITY_WORDS = frozenset({
+    "کیر", "کص", "کوص", "کون", "جنده", "کسکش", "کسخل", "گاییدم", "گاییده",
+    "گائیدم", "زنیکه", "حرومزاده", "حروم‌زاده", "مادرجنده", "ننه‌جنده",
+    "کونی", "لاشی", "عوضی", "آشغال", "کثافت", "بیناموس", "بی‌ناموس",
+    "fuck", "fucking", "bitch", "asshole", "motherfucker", "slut", "whore",
+})
+
+
+def _normalize_for_profanity(text: str) -> str:
+    text = (text or "").lower()
+    text = text.replace("\u200c", "")  # نیم‌فاصله (ZWNJ) - رایج‌ترین ترفندِ دورزدنِ فیلتر
+    text = re.sub(r"[\s\-_.،,!؟?]+", " ", text)
+    return text
+
+
+def _contains_profanity(text: str) -> str | None:
+    normalized = _normalize_for_profanity(text)
+    if not normalized:
+        return None
+    tokens = normalized.split()
+    joined = normalized.replace(" ", "")
+    for word in PROFANITY_WORDS:
+        if word in tokens or word in joined:
+            return word
+    return None
+
+
+@client.on(events.NewMessage(outgoing=True, pattern=pat(["فیلترفحش", "profanityfilter"])))
+async def profanityfilter_cmd_handler(event):
+    if not event.is_group:
+        return await event.edit("این دستور فقط توی گروه‌ها کار می‌کنه")
+
+    sub = (event.pattern_match.group(1) or "").strip().lower()
+
+    if sub in ("روشن", "on"):
+        await set_profanity_filter(event.chat_id, True)
+        return await event.edit(
+            "✅ فیلترِ فحش روشن شد.\n"
+            "از این به بعد پیامِ حاویِ کلماتِ رکیک از طرفِ اعضای غیرادمین این گروه خودکار حذف می‌شه."
+        )
+
+    if sub in ("خاموش", "off"):
+        await set_profanity_filter(event.chat_id, False)
+        return await event.edit("❌ فیلترِ فحشِ این گروه خاموش شد")
+
+    status = "روشن ✅" if is_profanity_filter_enabled(event.chat_id) else "خاموش ❌"
+    await event.edit(
+        "🤬 **فیلترِ فحش**\n"
+        f"وضعیتِ این گروه: {status}\n\n"
+        f"`{PREFIX}فیلترفحش روشن` / `{PREFIX}فیلترفحش خاموش`\n\n"
+        "بر پایه‌ی یه لیستِ داخلیِ کلماتِ رکیکِ رایج کار می‌کنه (بدونِ نیاز به AI)؛ "
+        f"برای کلماتِ سفارشیِ خودتون از `{PREFIX}فیلترکلمه` استفاده کنید.\n"
+        "⚠️ فقط پیام‌های اعضای غیرادمین چک می‌شن."
+    )
+
+
+@client.on(events.NewMessage(incoming=True))
+async def profanityfilter_watcher(event):
+    if not event.is_group:
+        return
+    if not is_profanity_filter_enabled(event.chat_id):
+        return
+    sender_id = event.sender_id
+    if sender_id is None or sender_id == runtime.SELF_ID:
+        return
+    if await _is_admin_or_creator(event.chat_id, sender_id):
+        return
+
+    text = event.raw_text or ""
+    if not text or not _contains_profanity(text):
+        return
+
+    try:
+        await event.delete()
+        await increment_deleted(event.chat_id)
+    except Exception:
+        _record_error()
+        logger.exception("خطا در حذفِ پیامِ حاویِ فحش")
+
+
 # ------------------------------------------------------------ فیلتر کلمات ممنوعه سفارشی ---
 @client.on(events.NewMessage(outgoing=True, pattern=pat(["فیلترکلمه", "wordfilter"])))
 async def wordfilter_cmd_handler(event):
@@ -756,6 +866,27 @@ async def wordfilter_watcher(event):
 
 
 # ------------------------------------------------------------ سیستم هشدار تدریجی ---
+async def _resolve_warn_target(event, target: str):
+    """
+    پیداکردنِ کاربرِ مقصد برای دستورهای اخطار: یا با ریپلای‌کردن روی پیامِ خودِ
+    کاربر (بدونِ نیاز به دونستنِ یوزرنیم/آیدی)، یا با دادنِ @یوزرنیم/آیدیِ عددی.
+    """
+    if not target and event.is_reply:
+        reply = await event.get_reply_message()
+        if reply and reply.sender_id:
+            try:
+                return await client.get_entity(reply.sender_id)
+            except Exception:
+                return None
+        return None
+    if target and (target.startswith("@") or target.lstrip("-").isdigit()):
+        try:
+            return await client.get_entity(target)
+        except Exception:
+            return None
+    return None
+
+
 @client.on(events.NewMessage(outgoing=True, pattern=pat(["اخطار", "warn"])))
 async def warn_cmd_handler(event):
     if not event.is_group:
@@ -787,23 +918,23 @@ async def warn_cmd_handler(event):
 
     if sub in ("افزودن", "add"):
         args = rest.split(maxsplit=1)
-        if not args:
-            return await event.edit(f"مثال: `{PREFIX}اخطار افزودن @username دلیل`")
-        target = args[0]
-        reason = args[1] if len(args) > 1 else "بدون دلیل"
-        # پیدا کردن کاربر
-        try:
-            if target.startswith("@") or target.isdigit():
-                user = await client.get_entity(target)
-            else:
-                return await event.edit("لطفاً آیدی عددی یا یوزرنیم را وارد کنید.")
-        except Exception:
-            return await event.edit("کاربر پیدا نشد.")
+        target = args[0] if args and (args[0].startswith("@") or args[0].lstrip("-").isdigit()) else ""
+        if target:
+            reason = args[1] if len(args) > 1 else "بدون دلیل"
+        else:
+            reason = rest.strip() or "بدون دلیل"
+        user = await _resolve_warn_target(event, target)
+        if user is None:
+            return await event.edit(
+                f"کاربر پیدا نشد. یا با ریپلای روی پیامِ کاربر بزنید `{PREFIX}اخطار افزودن [دلیل]`، "
+                f"یا آیدیِ عددی/یوزرنیم بدید: `{PREFIX}اخطار افزودن @username دلیل`"
+            )
         user_id = user.id
         # افزودن هشدار
         warn_obj = await add_warn(chat_id, user_id)
+        await increment_warnings(chat_id)
         settings = await get_warn_settings(chat_id)
-        msg = f"⚠️ به کاربر {user.first_name or user_id} یک هشدار اضافه شد. (تعداد: {warn_obj.warn_count})"
+        msg = f"⚠️ به کاربر {user.first_name or user_id} یک هشدار اضافه شد. (تعداد: {warn_obj.warn_count}) — دلیل: {reason}"
         if settings.enabled and warn_obj.warn_count >= settings.warn_limit:
             # اجرای اقدام خودکار
             action = settings.action_on_limit
@@ -826,16 +957,12 @@ async def warn_cmd_handler(event):
         return
 
     if sub in ("حذف", "remove"):
-        if not rest:
-            return await event.edit(f"مثال: `{PREFIX}اخطار حذف @username`")
-        target = rest.strip()
-        try:
-            if target.startswith("@") or target.isdigit():
-                user = await client.get_entity(target)
-            else:
-                return await event.edit("لطفاً آیدی عددی یا یوزرنیم را وارد کنید.")
-        except Exception:
-            return await event.edit("کاربر پیدا نشد.")
+        user = await _resolve_warn_target(event, rest.strip())
+        if user is None:
+            return await event.edit(
+                f"کاربر پیدا نشد. یا با ریپلای روی پیامِ کاربر بزنید `{PREFIX}اخطار حذف`، "
+                f"یا آیدیِ عددی/یوزرنیم بدید: `{PREFIX}اخطار حذف @username`"
+            )
         success = await remove_warn(chat_id, user.id)
         if success:
             await event.edit(f"✅ یک هشدار از کاربر {user.first_name or user.id} کم شد.")
@@ -844,16 +971,12 @@ async def warn_cmd_handler(event):
         return
 
     if sub in ("پاک", "clear"):
-        if not rest:
-            return await event.edit(f"مثال: `{PREFIX}اخطار پاک @username`")
-        target = rest.strip()
-        try:
-            if target.startswith("@") or target.isdigit():
-                user = await client.get_entity(target)
-            else:
-                return await event.edit("لطفاً آیدی عددی یا یوزرنیم را وارد کنید.")
-        except Exception:
-            return await event.edit("کاربر پیدا نشد.")
+        user = await _resolve_warn_target(event, rest.strip())
+        if user is None:
+            return await event.edit(
+                f"کاربر پیدا نشد. یا با ریپلای روی پیامِ کاربر بزنید `{PREFIX}اخطار پاک`، "
+                f"یا آیدیِ عددی/یوزرنیم بدید: `{PREFIX}اخطار پاک @username`"
+            )
         success = await clear_warnings(chat_id, user.id)
         if success:
             await event.edit(f"✅ همه هشدارهای کاربر {user.first_name or user.id} پاک شد.")
