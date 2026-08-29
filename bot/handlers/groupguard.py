@@ -930,15 +930,10 @@ async def warn_cmd_handler(event):
                 f"یا آیدیِ عددی/یوزرنیم بدید: `{PREFIX}اخطار افزودن @username دلیل`"
             )
         user_id = user.id
-        try:
-            # افزودن هشدار
-            warn_obj = await add_warn(chat_id, user_id)
-            await increment_warnings(chat_id)
-            settings = await get_warn_settings(chat_id)
-        except Exception as e:
-            # خطا در دیتابیس یا هر جای دیگر
-            await event.edit(f"❌ خطا در افزودن هشدار: {e}\n\nاطمینان حاصل کنید که دیتابیس PostgreSQL متصل است و جدول‌های مربوطه ایجاد شده‌اند.")
-            return
+        # افزودن هشدار
+        warn_obj = await add_warn(chat_id, user_id)
+        await increment_warnings(chat_id)
+        settings = await get_warn_settings(chat_id)
         msg = f"⚠️ به کاربر {user.first_name or user_id} یک هشدار اضافه شد. (تعداد: {warn_obj.warn_count}) — دلیل: {reason}"
         if settings.enabled and warn_obj.warn_count >= settings.warn_limit:
             # اجرای اقدام خودکار
@@ -957,7 +952,7 @@ async def warn_cmd_handler(event):
             except Exception as e:
                 _record_error()
                 logger.exception("خطا در اعمال اقدام خودکار: %s", e)
-                msg += f" ❌ خطا در اعمال اقدام خودکار: {e}"
+                msg += " ❌ خطا در اعمال اقدام خودکار."
         await event.edit(msg)
         return
 
@@ -968,14 +963,11 @@ async def warn_cmd_handler(event):
                 f"کاربر پیدا نشد. یا با ریپلای روی پیامِ کاربر بزنید `{PREFIX}اخطار حذف`، "
                 f"یا آیدیِ عددی/یوزرنیم بدید: `{PREFIX}اخطار حذف @username`"
             )
-        try:
-            success = await remove_warn(chat_id, user.id)
-            if success:
-                await event.edit(f"✅ یک هشدار از کاربر {user.first_name or user.id} کم شد.")
-            else:
-                await event.edit(f"⚠️ کاربر هیچ هشداری نداشت.")
-        except Exception as e:
-            await event.edit(f"❌ خطا در حذف هشدار: {e}\n\nاطمینان حاصل کنید که دیتابیس PostgreSQL متصل است.")
+        success = await remove_warn(chat_id, user.id)
+        if success:
+            await event.edit(f"✅ یک هشدار از کاربر {user.first_name or user.id} کم شد.")
+        else:
+            await event.edit(f"⚠️ کاربر هیچ هشداری نداشت.")
         return
 
     if sub in ("پاک", "clear"):
@@ -985,14 +977,11 @@ async def warn_cmd_handler(event):
                 f"کاربر پیدا نشد. یا با ریپلای روی پیامِ کاربر بزنید `{PREFIX}اخطار پاک`، "
                 f"یا آیدیِ عددی/یوزرنیم بدید: `{PREFIX}اخطار پاک @username`"
             )
-        try:
-            success = await clear_warnings(chat_id, user.id)
-            if success:
-                await event.edit(f"✅ همه هشدارهای کاربر {user.first_name or user.id} پاک شد.")
-            else:
-                await event.edit(f"⚠️ کاربر هیچ هشداری نداشت.")
-        except Exception as e:
-            await event.edit(f"❌ خطا در پاک‌کردن هشدارها: {e}\n\nاطمینان حاصل کنید که دیتابیس PostgreSQL متصل است.")
+        success = await clear_warnings(chat_id, user.id)
+        if success:
+            await event.edit(f"✅ همه هشدارهای کاربر {user.first_name or user.id} پاک شد.")
+        else:
+            await event.edit(f"⚠️ کاربر هیچ هشداری نداشت.")
         return
 
     if sub in ("لیست", "list"):
