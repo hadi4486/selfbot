@@ -101,24 +101,46 @@ _ADMIN_CACHE_TTL = 300  # ثانیه
 _admin_cache: dict[tuple[int, int], tuple[bool, float]] = {}
 
 
-async def _is_admin_or_creator(chat_id: int, user_id: int) -> bool:
+async def _is_admin_or_creator(event) -> bool:
     """
-    نکته: قبلاً وقتی get_permissions fail می‌شد، تابع False ("ادمین نیست")
-    برمی‌گردوند - که یعنی پیام حذف می‌شد؛ درحالی‌که کامنتِ خودِ کد می‌گفت هدف
-    اینه که با عدمِ اطمینان، پیام حذف *نشه*. این‌جا درستش کردیم: روی خطا True
-    ("برای احتیاط، ادمین فرض کن") برمی‌گردونه تا پیامِ یه ادمینِ واقعی به‌خاطرِ
-    یه خطای موقتِ شبکه اشتباهی حذف نشه.
+    نکته (تاریخچه): قبلاً وقتی get_permissions fail می‌شد، تابع False ("ادمین
+    نیست") برمی‌گردوند - که یعنی پیام حذف می‌شد؛ درحالی‌که کامنتِ خودِ کد
+    می‌گفت هدف اینه که با عدمِ اطمینان، پیام حذف *نشه*. اون‌موقع درستش کردیم:
+    روی خطا True ("برای احتیاط، ادمین فرض کن") برمی‌گردوند.
+
+    باگِ واقعی (پیدا شده بعد از گزارشِ کاربر - عکسِ NSFWِ یه عضوِ غیرادمین حذف
+    نمی‌شد با این‌که `.فیلترپورن تست` رویِ همون عکس درست NSFW تشخیص می‌داد):
+    قبلاً اینجا `client.get_permissions(chat_id, user_id)` با یه آی‌دیِ خام
+    صدا زده می‌شد. تلتون برای resolveِ یه آی‌دیِ خام باید اون یوزر رو از کشِ
+    داخلیِ session پیدا کنه؛ اگه فرستنده کسی باشه که اکانتِ خودمون قبلاً
+    مستقیماً باهاش تعامل نداشته (خیلی معموله توی گروه‌های بزرگ)، همین خط با
+    `ValueError: Could not find the input entity...` fail می‌شد - که می‌افتاد
+    توی fail-openِ بالا و اون کاربرِ کاملاً غیرادمین رو ۵ دقیقه (به‌خاطرِ کش)
+    «ادمین» فرض می‌کرد؛ یعنی نه فقط فیلترِ پورن، فیلترِ لینک/اسپم/فحش/کلمه هم
+    برای همون کاربر توی همون بازه بی‌صدا غیرفعال می‌شدن. بدونِ هیچ لاگِ خطایی،
+    چون قبلاً قورت می‌شد.
+
+    فیکس: به‌جای resolveِ یه آی‌دیِ خام، از خودِ event.get_permissions()
+    استفاده می‌کنیم - چون پیامِ ورودی خودش از قبل حاویِ Peerِ کاملِ فرستنده‌ست
+    و برخلافِ client.get_permissions(chat_id, user_id) نیازی به کشِ سشن
+    نداره، پس این خطای خاص اصلاً پیش نمی‌آد.
     """
+    chat_id = event.chat_id
+    user_id = event.sender_id
     key = (chat_id, user_id)
     now = time.monotonic()
     cached = _admin_cache.get(key)
     if cached is not None and now - cached[1] < _ADMIN_CACHE_TTL:
         return cached[0]
     try:
-        perms = await client.get_permissions(chat_id, user_id)
+        perms = await event.get_permissions()
         is_admin = bool(getattr(perms, "is_admin", False) or getattr(perms, "is_creator", False))
     except Exception:
-        is_admin = True  # اگه نتونستیم چک کنیم، برای احتیاط پیام رو حذف نمی‌کنیم
+        is_admin = True  # اگه واقعاً نتونستیم چک کنیم، برای احتیاط پیام رو حذف نمی‌کنیم
+        logger.warning(
+            "چک ادمین‌بودن برای (chat_id=%s, user_id=%s) fail شد - fail-open (ادمین فرض شد)",
+            chat_id, user_id, exc_info=True,
+        )
     _admin_cache[key] = (is_admin, now)
     return is_admin
 
@@ -163,7 +185,7 @@ async def linkfilter_watcher(event):
     text = event.raw_text or ""
     if not _LINK_RE.search(text):
         return
-    if await _is_admin_or_creator(event.chat_id, sender_id):
+    if await _is_admin_or_creator(event):
         return
     try:
         await event.delete()
@@ -219,18 +241,16 @@ async def _is_nsfw_image(raw: bytes) -> bool:
     می‌شن: False برمی‌گردونه - چون این‌ها ربطی به محتوای عکس ندارن (نمی‌خوایم
     یه قطعیِ موقتِ سرویس باعثِ پاک‌شدنِ عکسِ سالمِ یه کاربر بشه).
 
-    ولی حالتِ «بدونِ خطای HTTP، پاسخ نه NSFW بود نه SAFE» (یعنی content خالی
-    برگشته، معمولاً finish_reason=stop) عمداً fail-close شده: طبقِ تست‌های
-    عملی روی این پروژه، این حالت فقط وقتی رخ می‌ده که تصویر واقعاً صریح/جنسیه
-    (سرویس/مدل به‌جای پاسخِ صریح NSFW، سکوت می‌کنه یا پاسخ رو خالی می‌کنه -
-    یه رفتارِ رایج در لایه‌ی moderationِ خیلی از providerها که finish_reason
-    رو هم صادقانه content_filter نمی‌ذارن)؛ عکسِ سالم (مثلاً غذا) همیشه با
-    SAFE جواب داده می‌شه. پس این پاسخِ مبهم رو این‌جا معادلِ NSFW می‌گیریم.
-
-    نکته: قبلاً این خطا فقط با logger.debug ثبت می‌شد که با سطحِ پیش‌فرضِ
-    LOG_LEVEL=INFO (بوت‌استرپِ Railway) اصلاً توی لاگ دیده نمی‌شد. حالا با
-    warning ثبت می‌شه (توی سطحِ پیش‌فرض هم دیده می‌شه) و متنِ خطای واقعی هم
-    توش هست. برای دیدنِ همین چیز مستقیم توی چت از `.فیلترپورن تست` استفاده کن.
+    حالتِ «بدونِ خطای HTTP، پاسخ نه NSFW بود نه SAFE» (content خالی/مبهم) هم
+    از قبل fail-close بود (یعنی NSFW در نظر گرفته می‌شد) - اون‌موقع مبتنی بر
+    این فرض بود که خودِ AI_MODEL اصلاً قادر به تشخیصِ NSFW نبوده، پس سکوت رو
+    نشونه‌ی صریح‌بودنِ تصویر می‌گرفتیم. حالا که با AI_MODELِ فعلی مدل درست هم
+    NSFW هم SAFE رو صریح تشخیص می‌ده، این فرض دیگه درست نیست: یه پاسخِ خالی/
+    مبهم دیگه لزوماً یعنی تصویر صریحه، بلکه معمولاً یعنی یه گلیچِ موقتِ سرویسه
+    (مثلِ قطع‌شدنِ اتصال وسطِ استریم، یا هر خطای دیگه‌ای که تبدیل به یه پاسخِ
+    ناقص شده نه یه خطای HTTPِ تمیز) - برای همین اینجا هم fail-open شده: به‌جای
+    پاک‌کردنِ اشتباهیِ عکسِ سالمِ یه کاربر، عکس رو دست‌نخورده رد می‌کنیم و فقط
+    warning لاگ می‌کنیم (قابلِ دیدن مستقیم توی چت هم با `.فیلترپورن تست`).
     """
     try:
         raw_response = await _classify_image(raw, return_raw=True)
@@ -245,15 +265,15 @@ async def _is_nsfw_image(raw: bytes) -> bool:
     normalized = answer.upper()
     if "NSFW" not in normalized and "SAFE" not in normalized:
         # نه خطا داد، نه یکی از دو کلمه‌ی موردِ انتظار رو برگردوند (پاسخِ
-        # خالی/مبهم) - طبقِ تصمیمِ آگاهانه، این حالت رو fail-close می‌کنیم
-        # (NSFW در نظر گرفته می‌شه)، چون در عمل نشونه‌ی محتوای صریحه.
+        # خالی/مبهم) - fail-open: با AI_MODELِ فعلی که درست NSFW/SAFE تشخیص
+        # می‌ده، این حالت دیگه نشونه‌ی قابلِ اعتمادِ محتوای صریح نیست.
         logger.warning(
             "فیلترِ پورن: پاسخِ مدل نه NSFW بود نه SAFE (احتمالاً خالی) - "
-            "fail-close (NSFW در نظر گرفته شد). پاسخِ خام: %r finish_reason: %r",
+            "fail-open (کاری با عکس نداریم). پاسخِ خام: %r finish_reason: %r",
             answer,
             choice.get("finish_reason"),
         )
-        return True
+        return False
     return "NSFW" in normalized
 
 
@@ -363,9 +383,10 @@ async def pornfilter_cmd_handler(event):
                 "⚠️ **درخواست بدونِ خطای HTTP موفق بود، ولی مدل نه NSFW نوشت نه SAFE** "
                 f"(پاسخِ خام: `{answer or '(خالی)'}`)\n"
                 f"**دلیل:** {reason_note}\n\n"
-                "فیلترِ خودکار همچین پاسخی رو **fail-close** می‌کنه (یعنی این عکس NSFW در نظر "
-                "گرفته و حذف می‌شه) - چون طبقِ تجربه‌ی این پروژه، این پاسخِ مبهم/خالی معمولاً "
-                "دقیقاً وقتی رخ می‌ده که تصویر واقعاً صریحه."
+                "فیلترِ خودکار همچین پاسخی رو **fail-open** می‌کنه (یعنی کاری با این عکس نداره، "
+                "حذف نمی‌شه) - با AI_MODELِ فعلی که درست NSFW/SAFE تشخیص می‌ده، یه پاسخِ مبهم/خالی "
+                "معمولاً یعنی یه گلیچِ موقتِ سرویس، نه لزوماً محتوای صریح؛ پس ترجیح بر ریسک‌نکردنِ "
+                "حذفِ اشتباهیِ عکسِ سالمه."
             )
         return await event.edit(f"✅ پاسخِ خامِ مدل برای این عکس: `{answer}` (finish_reason: `{finish_reason}`)")
 
@@ -395,7 +416,7 @@ async def pornfilter_watcher(event):
         return
     if not event.photo:
         return  # فعلاً فقط عکسِ فشرده‌شده چک می‌شه (نه ویدیو/GIF/استیکر/فایل)
-    if await _is_admin_or_creator(event.chat_id, sender_id):
+    if await _is_admin_or_creator(event):
         return
 
     file_size = getattr(event.message.file, "size", None) or 0
@@ -618,7 +639,7 @@ async def spamfilter_watcher(event):
     sender_id = event.sender_id
     if sender_id is None or sender_id == runtime.SELF_ID:
         return
-    if await _is_admin_or_creator(event.chat_id, sender_id):
+    if await _is_admin_or_creator(event):
         return
 
     key = (event.chat_id, sender_id)
@@ -740,7 +761,7 @@ async def profanityfilter_watcher(event):
     sender_id = event.sender_id
     if sender_id is None or sender_id == runtime.SELF_ID:
         return
-    if await _is_admin_or_creator(event.chat_id, sender_id):
+    if await _is_admin_or_creator(event):
         return
 
     text = event.raw_text or ""
@@ -839,7 +860,7 @@ async def wordfilter_watcher(event):
     sender_id = event.sender_id
     if sender_id is None or sender_id == runtime.SELF_ID:
         return
-    if await _is_admin_or_creator(chat_id, sender_id):
+    if await _is_admin_or_creator(event):
         return
     text = event.raw_text or ""
     if not text:
