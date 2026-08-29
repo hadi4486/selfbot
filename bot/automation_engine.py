@@ -135,16 +135,12 @@ async def trigger_event(event_type: str, context: Dict[str, Any]):
     """
     اجرای قوانین منطبق با یک رویداد.
     """
-    try:
-        rules = await automation_repo.get_rules_for_event(event_type, context)
-    except Exception:
-        logger.exception("خطا در خواندن قوانین منطبق برای رویداد %s", event_type)
-        return
+    rules = await automation_repo.get_rules_for_event(event_type, context)
 
     if not rules:
         return
 
-    logger.debug("اجرای %d قانون برای رویداد %s", len(rules), event_type)
+    logger.info(f"اجرای {len(rules)} قانون برای رویداد {event_type}")
 
     for rule in rules:
         try:
@@ -190,4 +186,4 @@ async def _evaluate_condition(condition: str, context: Dict[str, Any]) -> bool:
         if context_value is not None:
             return str(context_value) == right
 
-    return False  # شرط نامشخص → رد (امنیت: پیش‌فرض عدم اطمینان)
+    return True  # شرط نامشخص → قبول

@@ -39,7 +39,7 @@ _FULL_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})[ T](\d{1,2}):(\d{2})$")
 
 def _local_now() -> dt.datetime:
     """همون الگوی clock.py: زمانِ محلی به‌صورت naive datetime."""
-    return dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=TIMEZONE_OFFSET)
+    return dt.datetime.utcnow() + dt.timedelta(hours=TIMEZONE_OFFSET)
 
 
 def _to_utc_aware(local_dt: dt.datetime) -> dt.datetime:

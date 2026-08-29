@@ -184,7 +184,6 @@ async def rps_handler(event):
 
 
 GUESS_GAMES = {}  # chat_id -> {"target": int, "max": int, "attempts": int} - بازیِ فعالِ هر چت
-_MAX_GAMES = 100  # حداکثر تعداد بازی‌های هم‌زمان (جلوگیری از memory leak)
 
 
 @client.on(events.NewMessage(outgoing=True, pattern=pat(["حدس", "guess"])))
@@ -198,11 +197,6 @@ async def guess_handler(event):
         max_n = 100
         if len(parts) > 1 and parts[1].isdigit():
             max_n = max(10, min(int(parts[1]), 1_000_000))
-        # جلوگیری از memory leak: اغه تعداد بازی‌ها از حداکثر رد شد، قدیمی‌ها رو پاک کن
-        if len(GUESS_GAMES) >= _MAX_GAMES:
-            oldest_keys = list(GUESS_GAMES.keys())[:_MAX_GAMES // 2]
-            for k in oldest_keys:
-                GUESS_GAMES.pop(k, None)
         GUESS_GAMES[chat_id] = {"target": random.randint(1, max_n), "max": max_n, "attempts": 0}
         return await event.edit(
             f"🎯 یه عدد بین ۱ تا {max_n} توی ذهنم انتخاب کردم.\n"
@@ -436,8 +430,6 @@ async def wyr_handler(event):
 
 QUIZ_GAMES = {}   # chat_id -> {"correct": int (۱ تا ۴), "answer_text": str}
 QUIZ_SCORES = {}  # chat_id -> {"correct": int, "total": int} - فقط توی حافظه (ری‌استارت پاک می‌شه)
-_MAX_QUIZ_GAMES = 50
-_MAX_QUIZ_SCORES = 200
 
 _QUIZ_TRANSLATE_SYSTEM_PROMPT = (
     "شما مترجمی هستید که سوالِ کوییزهای انگلیسی رو به فارسیِ روان و طبیعی "

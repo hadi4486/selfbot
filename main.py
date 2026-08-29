@@ -33,7 +33,6 @@ from bot.logging_config import setup_logging
 
 setup_logging()  # باید قبل از import هر ماژولی که logger می‌سازه صدا زده بشه
 
-import asyncio
 import logging
 
 from bot import config
@@ -53,7 +52,6 @@ from bot.handlers.autopost import autopost_worker
 from bot.handlers.assistant import assistant_status_watcher
 from bot.handlers.daily_digest import daily_digest_worker
 from bot.handlers.scheduler import scheduler_worker
-from bot.handlers.message_tracker import message_tracker_cleanup_worker
 from bot.handlers.stats import stats_saver
 
 from telethon.errors.rpcerrorlist import AuthKeyDuplicatedError
@@ -66,11 +64,6 @@ logger = logging.getLogger("selfbot.main")
 
 async def main():
     await get_http_session()  # ساخت ClientSession مشترک قبل از شروع کار
-
-    # هاندلری خروج خلصیتن برای بهتر بستن پروسه از پیشنهدنی تلگرام دریافت بشه
-    def _shutdown_handler():
-        logger.info("درحالت خروج شخص شد در حال بهتر بستن پروسه...")
-    # signal.signal(signal.SIGTERM, _shutdown_handler)  # در موقعیت برنامهریزی فعال میشه
 
     # باید قبل از استارت شدنِ تسک‌های پس‌زمینه انجام بشه، وگرنه اون تسک‌ها با
     # مقادیر پیش‌فرض (نه آخرین وضعیتِ ذخیره‌شده در PostgreSQL) شروع می‌کنن.
@@ -94,17 +87,16 @@ async def main():
         bot_me = await bot_client.get_me()
         set_bot_username(bot_me.username)
         logger.info("بات کمکیِ پنل به @%s وصل شد", bot_me.username)
-        asyncio.create_task(bot_client.run_until_disconnected())
+        client.loop.create_task(bot_client.run_until_disconnected())
     else:
         logger.warning("BOT_TOKEN تنظیم نشده؛ «.پنل» فقط راهنما می‌ده (بقیه‌ی دستورات عادی کار می‌کنن)")
 
-    asyncio.create_task(clock_updater())
-    asyncio.create_task(autopost_worker())
-    asyncio.create_task(assistant_status_watcher())
-    asyncio.create_task(scheduler_worker())
-    asyncio.create_task(daily_digest_worker())
-    asyncio.create_task(stats_saver())
-    asyncio.create_task(message_tracker_cleanup_worker())
+    client.loop.create_task(clock_updater())
+    client.loop.create_task(autopost_worker())
+    client.loop.create_task(assistant_status_watcher())
+    client.loop.create_task(scheduler_worker())
+    client.loop.create_task(daily_digest_worker())
+    client.loop.create_task(stats_saver())
     try:
         await client.run_until_disconnected()
     finally:
@@ -115,17 +107,6 @@ async def main():
 
 
 if __name__ == "__main__":
-    import signal
-    _shutdown_event = asyncio.Event()
-
-    def _signal_handler(sig, frame):
-        logger.info("سیگنال %s دریافت شد در حال بهتر بستن بشه در حال خروج...", sig)
-        _shutdown_event.set()
-
-    # ثبت signal handler برای خاموشی تمیز
-    signal.signal(signal.SIGTERM, _signal_handler)
-    signal.signal(signal.SIGINT, _signal_handler)
-
     try:
         with client:
             client.loop.run_until_complete(main())

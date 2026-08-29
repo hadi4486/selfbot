@@ -1,6 +1,6 @@
 """
 وضعیتِ «مدیریت گروه پیشرفته» (فیلترلینک + خوش‌آمدگویی + فیلترِ پورن + فیلترِ
-اسپم + فیلترِ فحش) - PostgreSQL از طریق Repository Layer، دقیقاً مثل بقیه‌ی storeها: یک
+اسپم) - PostgreSQL از طریق Repository Layer، دقیقاً مثل بقیه‌ی storeها: یک
 دیکشنریِ درون‌حافظه‌ای که Handlerها مستقیم بهش رفرنس دارن،
 init_group_guard_state() موقع استارتاپ (bot/db/bootstrap.py) پرش می‌کنه.
 """
@@ -13,7 +13,6 @@ group_guard_state = {
     "welcome": {},  # chat_id -> {"enabled": bool, "text": str | None}
     "porn_filter_chats": set(),  # chat_id هایی که فیلترِ پورن روشنه
     "spam_filter_chats": set(),  # chat_id هایی که فیلترِ اسپم روشنه
-    "profanity_filter_chats": set(),  # chat_id هایی که فیلترِ فحش روشنه
 }
 
 
@@ -23,7 +22,6 @@ async def init_group_guard_state() -> None:
     welcome = {}
     porn_chats = set()
     spam_chats = set()
-    profanity_chats = set()
     for row in rows:
         if row.link_filter_enabled:
             link_chats.add(row.chat_id)
@@ -33,13 +31,10 @@ async def init_group_guard_state() -> None:
             porn_chats.add(row.chat_id)
         if row.spam_filter_enabled:
             spam_chats.add(row.chat_id)
-        if row.profanity_filter_enabled:
-            profanity_chats.add(row.chat_id)
     group_guard_state["link_filter_chats"] = link_chats
     group_guard_state["welcome"] = welcome
     group_guard_state["porn_filter_chats"] = porn_chats
     group_guard_state["spam_filter_chats"] = spam_chats
-    group_guard_state["profanity_filter_chats"] = profanity_chats
 
 
 async def set_link_filter(chat_id: int, enabled: bool) -> None:
@@ -76,18 +71,6 @@ async def set_spam_filter(chat_id: int, enabled: bool) -> None:
 
 def is_spam_filter_enabled(chat_id: int) -> bool:
     return chat_id in group_guard_state["spam_filter_chats"]
-
-
-async def set_profanity_filter(chat_id: int, enabled: bool) -> None:
-    if enabled:
-        group_guard_state["profanity_filter_chats"].add(chat_id)
-    else:
-        group_guard_state["profanity_filter_chats"].discard(chat_id)
-    await group_guard_repo.set_profanity_filter(chat_id, enabled)
-
-
-def is_profanity_filter_enabled(chat_id: int) -> bool:
-    return chat_id in group_guard_state["profanity_filter_chats"]
 
 
 async def set_welcome_enabled(chat_id: int, enabled: bool) -> None:

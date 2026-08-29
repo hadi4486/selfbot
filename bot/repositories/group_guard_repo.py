@@ -25,7 +25,6 @@ async def list_all() -> list[GroupGuardSettings]:
                 welcome_text=r.welcome_text,
                 porn_filter_enabled=r.porn_filter_enabled,
                 spam_filter_enabled=r.spam_filter_enabled,
-                profanity_filter_enabled=r.profanity_filter_enabled,
             )
             for r in rows
         ]
@@ -47,12 +46,6 @@ async def set_spam_filter(chat_id: int, enabled: bool) -> None:
     async with session_scope() as session:
         obj = await _get_or_create(session, chat_id)
         obj.spam_filter_enabled = enabled
-
-
-async def set_profanity_filter(chat_id: int, enabled: bool) -> None:
-    async with session_scope() as session:
-        obj = await _get_or_create(session, chat_id)
-        obj.profanity_filter_enabled = enabled
 
 
 async def set_welcome(

@@ -228,7 +228,6 @@ class GroupGuardSettings(Base):
     welcome_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     porn_filter_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     spam_filter_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    profanity_filter_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     updated_at: Mapped[dt.datetime] = mapped_column(
         server_default=func.now(), onupdate=func.now(), nullable=False
     )

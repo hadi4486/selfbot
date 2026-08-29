@@ -57,14 +57,10 @@ async def _handle_notify(rule, context):
 
 
 async def _handle_save(rule, context):
-    chat_id = context.get("chat_id")
-    message_id = context.get("message_id")
-    if not chat_id or not message_id:
-        return
     try:
         await save_item(
-            chat_id=chat_id,
-            message_id=message_id,
+            chat_id=context["chat_id"],
+            message_id=context["message_id"],
             text=context.get("text") or "",
             sender_id=context.get("sender_id"),
         )
@@ -76,12 +72,8 @@ async def _handle_forward(rule, context):
     self_id = runtime.SELF_ID
     if not self_id:
         return
-    chat_id = context.get("chat_id")
-    message_id = context.get("message_id")
-    if not chat_id or not message_id:
-        return
     try:
-        await client.forward_messages(self_id, message_id, chat_id)
+        await client.forward_messages(self_id, context["message_id"], context["chat_id"])
     except Exception:
         logger.exception("خطا در فوروارد پیام")
 

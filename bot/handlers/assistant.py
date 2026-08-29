@@ -138,7 +138,7 @@ _CLOCK_RE = re.compile(r"^(\d{1,2}):(\d{2})$")
 
 
 def _local_now() -> datetime:
-    return datetime.now(timezone.utc) + timedelta(hours=config.TIMEZONE_OFFSET)
+    return datetime.utcnow() + timedelta(hours=config.TIMEZONE_OFFSET)
 
 
 def _minute_of_day(moment: datetime) -> int:

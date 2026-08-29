@@ -61,14 +61,12 @@ async def delete(job_id: int) -> bool:
 
 async def search_jobs(query: str, limit: int = 50) -> list[ScheduledJob]:
     """جستجوی کارهای زمان‌بندی‌شده بر اساسِ متن (برای `.جستجو`)."""
-    escaped = query.replace("%", "\\%").replace("_", "\\_")
-    pattern = f"%{escaped}%"
     async with session_scope() as session:
         rows = (
             (
                 await session.execute(
                     select(ScheduledJob)
-                    .where(ScheduledJob.text.ilike(pattern))
+                    .where(ScheduledJob.text.ilike(f"%{query}%"))
                     .order_by(ScheduledJob.run_at.asc())
                     .limit(limit)
                 )

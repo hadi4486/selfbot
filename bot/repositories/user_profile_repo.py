@@ -67,14 +67,13 @@ async def get_profile(user_id: int) -> Optional[UserProfile]:
 
 
 async def search_profiles(query: str) -> List[UserProfile]:
-    """جستجو در پروفایل کاربران."""
-    escaped = query.replace("%", "\\%").replace("_", "\\_")
+    """جستجوی کاربران بر اساس نام یا تگ."""
     async with session_scope() as session:
         stmt = select(UserProfile).where(
-            (UserProfile.first_name.ilike(f"%{escaped}%")) |
-            (UserProfile.last_name.ilike(f"%{escaped}%")) |
-            (UserProfile.username.ilike(f"%{escaped}%")) |
-            (UserProfile.tags.ilike(f"%{escaped}%"))
+            (UserProfile.first_name.ilike(f"%{query}%")) |
+            (UserProfile.last_name.ilike(f"%{query}%")) |
+            (UserProfile.username.ilike(f"%{query}%")) |
+            (UserProfile.tags.ilike(f"%{query}%"))
         )
         result = await session.execute(stmt)
         return list(result.scalars().all())
@@ -83,8 +82,7 @@ async def search_profiles(query: str) -> List[UserProfile]:
 async def get_by_tags(tag: str) -> List[UserProfile]:
     """دریافت کاربران با یک تگ خاص."""
     async with session_scope() as session:
-        escaped_tag = tag.replace("%", "\\%").replace("_", "\\_")
-        stmt = select(UserProfile).where(UserProfile.tags.ilike(f"%{escaped_tag}%"))
+        stmt = select(UserProfile).where(UserProfile.tags.ilike(f"%{tag}%"))
         result = await session.execute(stmt)
         return list(result.scalars().all())
 
