@@ -52,7 +52,7 @@ _DIGEST_SYSTEM = (
 
 
 def _local_now() -> dt.datetime:
-    return dt.datetime.utcnow() + dt.timedelta(hours=TIMEZONE_OFFSET)
+    return dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=TIMEZONE_OFFSET)
 
 
 def _today_str() -> str:

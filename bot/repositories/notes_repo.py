@@ -37,9 +37,12 @@ async def delete_note(key: str) -> bool:
 
 async def search_notes(query: str, limit: int = 50) -> list[Note]:
     """جستجوی یادداشت‌ها بر اساسِ کلید یا متن (برای `.جستجو`)."""
+    # اسکیپِ کاراکترهای ویژه‌ی LIKE (% و _) برای جلوگیری از injection الگو
+    escaped = query.replace("%", "\\%").replace("_", "\\_")
+    pattern = f"%{escaped}%"
     async with session_scope() as session:
         stmt = select(Note).where(
-            Note.key.ilike(f"%{query}%") | Note.text.ilike(f"%{query}%")
+            Note.key.ilike(pattern) | Note.text.ilike(pattern)
         ).limit(limit)
         result = await session.execute(stmt)
         return list(result.scalars().all())

@@ -43,7 +43,7 @@ async def save_item(
             existing_item.importance = importance
             existing_item.tags = tags
             existing_item.note = note
-            await session.commit()
+            await session.flush()
             return existing_item
 
         item = InboxItem(
@@ -59,7 +59,7 @@ async def save_item(
             read=False,
         )
         session.add(item)
-        await session.commit()
+        await session.flush()
         await session.refresh(item)
         return item
 
@@ -69,7 +69,6 @@ async def mark_read(item_id: int) -> bool:
     async with session_scope() as session:
         stmt = update(InboxItem).where(InboxItem.id == item_id).values(read=True)
         result = await session.execute(stmt)
-        await session.commit()
         return result.rowcount > 0
 
 
@@ -78,7 +77,6 @@ async def mark_unread(item_id: int) -> bool:
     async with session_scope() as session:
         stmt = update(InboxItem).where(InboxItem.id == item_id).values(read=False)
         result = await session.execute(stmt)
-        await session.commit()
         return result.rowcount > 0
 
 
@@ -87,7 +85,6 @@ async def delete_item(item_id: int) -> bool:
     async with session_scope() as session:
         stmt = delete(InboxItem).where(InboxItem.id == item_id)
         result = await session.execute(stmt)
-        await session.commit()
         return result.rowcount > 0
 
 
@@ -134,9 +131,11 @@ async def get_stats() -> Dict[str, int]:
 
 async def search_items(query: str, limit: int = 50) -> List[InboxItem]:
     """جستجو در متن آیتم‌ها."""
+    escaped = query.replace("%", "\\%").replace("_", "\\_")
+    pattern = f"%{escaped}%"
     async with session_scope() as session:
         stmt = select(InboxItem).where(
-            InboxItem.text.ilike(f"%{query}%")
+            InboxItem.text.ilike(pattern)
         ).order_by(InboxItem.date.desc()).limit(limit)
         result = await session.execute(stmt)
         return list(result.scalars().all())
