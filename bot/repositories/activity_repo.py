@@ -10,29 +10,28 @@ from ..db.engine import session_scope
 from ..db.models_ext import GroupActivityLog
 
 
-async def get_or_create_log(chat_id: int, date: Optional[str] = None) -> GroupActivityLog:
-    """دریافت یا ایجاد لاگ برای یک روز خاص."""
+async def _get_or_create_log(session, chat_id: int, date: Optional[str] = None) -> GroupActivityLog:
+    """دریافت یا ایجاد لاگ برای یک روز خاص (با سشنِ خودِ caller - بدونِ باز کردنِ سشنِ جدید)."""
     if date is None:
         date = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d")
-    async with session_scope() as session:
-        stmt = select(GroupActivityLog).where(
-            GroupActivityLog.chat_id == chat_id,
-            GroupActivityLog.log_date == date
-        )
-        result = await session.execute(stmt)
-        obj = result.scalar_one_or_none()
-        if obj is None:
-            obj = GroupActivityLog(chat_id=chat_id, log_date=date)
-            session.add(obj)
-            await session.flush()
-            await session.refresh(obj)
-        return obj
+    stmt = select(GroupActivityLog).where(
+        GroupActivityLog.chat_id == chat_id,
+        GroupActivityLog.log_date == date
+    )
+    result = await session.execute(stmt)
+    obj = result.scalar_one_or_none()
+    if obj is None:
+        obj = GroupActivityLog(chat_id=chat_id, log_date=date)
+        session.add(obj)
+        await session.flush()
+        await session.refresh(obj)
+    return obj
 
 
 async def increment_messages(chat_id: int, count: int = 1) -> None:
     """افزایش شمارش پیام‌های ارسال شده."""
     async with session_scope() as session:
-        obj = await get_or_create_log(chat_id)
+        obj = await _get_or_create_log(session, chat_id)
         obj.messages_sent += count
         await session.flush()
 
@@ -40,7 +39,7 @@ async def increment_messages(chat_id: int, count: int = 1) -> None:
 async def increment_warnings(chat_id: int, count: int = 1) -> None:
     """افزایش شمارش هشدارها."""
     async with session_scope() as session:
-        obj = await get_or_create_log(chat_id)
+        obj = await _get_or_create_log(session, chat_id)
         obj.warnings_given += count
         await session.flush()
 
@@ -48,7 +47,7 @@ async def increment_warnings(chat_id: int, count: int = 1) -> None:
 async def increment_deleted(chat_id: int, count: int = 1) -> None:
     """افزایش شمارش پیام‌های حذف شده."""
     async with session_scope() as session:
-        obj = await get_or_create_log(chat_id)
+        obj = await _get_or_create_log(session, chat_id)
         obj.messages_deleted += count
         await session.flush()
 
@@ -56,7 +55,7 @@ async def increment_deleted(chat_id: int, count: int = 1) -> None:
 async def increment_joined(chat_id: int, count: int = 1) -> None:
     """افزایش شمارش اعضای جدید."""
     async with session_scope() as session:
-        obj = await get_or_create_log(chat_id)
+        obj = await _get_or_create_log(session, chat_id)
         obj.members_joined += count
         await session.flush()
 
@@ -64,7 +63,7 @@ async def increment_joined(chat_id: int, count: int = 1) -> None:
 async def increment_left(chat_id: int, count: int = 1) -> None:
     """افزایش شمارش اعضای خارج شده."""
     async with session_scope() as session:
-        obj = await get_or_create_log(chat_id)
+        obj = await _get_or_create_log(session, chat_id)
         obj.members_left += count
         await session.flush()
 

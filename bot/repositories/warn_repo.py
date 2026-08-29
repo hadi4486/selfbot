@@ -10,27 +10,26 @@ from ..db.engine import session_scope
 from ..db.models_ext import GroupUserWarning, GroupWarnSettings
 
 
-async def get_or_create_warning(chat_id: int, user_id: int) -> GroupUserWarning:
-    """دریافت یا ایجاد رکورد هشدار برای کاربر در گروه."""
-    async with session_scope() as session:
-        stmt = select(GroupUserWarning).where(
-            GroupUserWarning.chat_id == chat_id,
-            GroupUserWarning.user_id == user_id
-        )
-        result = await session.execute(stmt)
-        obj = result.scalar_one_or_none()
-        if obj is None:
-            obj = GroupUserWarning(chat_id=chat_id, user_id=user_id)
-            session.add(obj)
-            await session.flush()
-            await session.refresh(obj)
-        return obj
+async def _get_or_create_warning(session, chat_id: int, user_id: int) -> GroupUserWarning:
+    """دریافت یا ایجاد رکورد هشدار برای کاربر در گروه (با سشنِ خودِ caller - بدونِ باز کردنِ سشنِ جدید)."""
+    stmt = select(GroupUserWarning).where(
+        GroupUserWarning.chat_id == chat_id,
+        GroupUserWarning.user_id == user_id
+    )
+    result = await session.execute(stmt)
+    obj = result.scalar_one_or_none()
+    if obj is None:
+        obj = GroupUserWarning(chat_id=chat_id, user_id=user_id)
+        session.add(obj)
+        await session.flush()
+        await session.refresh(obj)
+    return obj
 
 
 async def add_warn(chat_id: int, user_id: int) -> GroupUserWarning:
     """افزودن یک هشدار به کاربر."""
     async with session_scope() as session:
-        obj = await get_or_create_warning(chat_id, user_id)
+        obj = await _get_or_create_warning(session, chat_id, user_id)
         obj.warn_count += 1
         obj.last_warn_time = dt.datetime.now(dt.timezone.utc)
         await session.flush()
@@ -94,16 +93,21 @@ async def list_warnings(chat_id: int) -> List[GroupUserWarning]:
         return list(result.scalars().all())
 
 
+async def _get_or_create_settings(session, chat_id: int) -> GroupWarnSettings:
+    """دریافت یا ایجادِ تنظیماتِ هشدارِ گروه (با سشنِ خودِ caller)."""
+    obj = await session.get(GroupWarnSettings, chat_id)
+    if obj is None:
+        obj = GroupWarnSettings(chat_id=chat_id)
+        session.add(obj)
+        await session.flush()
+        await session.refresh(obj)
+    return obj
+
+
 async def get_warn_settings(chat_id: int) -> GroupWarnSettings:
     """دریافت تنظیمات هشدار گروه (ایجاد در صورت نبود)."""
     async with session_scope() as session:
-        obj = await session.get(GroupWarnSettings, chat_id)
-        if obj is None:
-            obj = GroupWarnSettings(chat_id=chat_id)
-            session.add(obj)
-            await session.flush()
-            await session.refresh(obj)
-        return obj
+        return await _get_or_create_settings(session, chat_id)
 
 
 async def update_warn_settings(
@@ -116,7 +120,7 @@ async def update_warn_settings(
 ) -> GroupWarnSettings:
     """به‌روزرسانی تنظیمات هشدار گروه."""
     async with session_scope() as session:
-        obj = await get_warn_settings(chat_id)
+        obj = await _get_or_create_settings(session, chat_id)
         if enabled is not None:
             obj.enabled = enabled
         if warn_limit is not None:
