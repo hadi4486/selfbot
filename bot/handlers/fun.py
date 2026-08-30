@@ -8,7 +8,7 @@ import re
 import urllib.parse
 
 import aiohttp
-from telethon import errors, events
+from telethon import errors, events, functions, types
 from telethon.tl.custom import Button
 from telethon.tl.types import InputMediaDice
 
@@ -804,6 +804,7 @@ async def wordguess_handler(event):
 
 # ------------------------------------------------------------ ۳) مار‌پله ----
 SNAKES_GAMES = {}  # chat_id -> {"pos": int, "bot": int | None, "vs_bot": bool}
+SNAKES_INLINE_CHATS = {}  # repr(InputBotInlineMessageID) -> chat_id (پیامِ via-bot)
 _MAX_SNAKES_GAMES = 50
 _SNAKES_GOAL = 100
 
@@ -923,6 +924,14 @@ def _snakes_board_text(game: dict, last_line: str = "") -> str:
     return "\n".join(parts)
 
 
+def _snakes_markup(buttons):
+    """لیستِ دکمه‌ها → شیءِ ReplyInlineMarkup برای requestهای خام تلگرام."""
+    if not buttons:
+        return None
+    from telethon.tl.types import ReplyInlineMarkup, KeyboardButtonRow
+    return ReplyInlineMarkup(rows=[KeyboardButtonRow(buttons=row) for row in buttons])
+
+
 def _snakes_buttons(game: dict):
     """دکمه‌های زیرِ پیامِ زنده — فقط وقتی باتِ کمکی وصل باشه واقعی می‌شن."""
     if bot_client is None:
@@ -938,12 +947,30 @@ def _snakes_buttons(game: dict):
 
 async def _snakes_update(game, chat_id, text: str, fallback_event=None):
     """
-    پیامِ زنده: همیشه همون پیامِ صفحه رو آپدیت می‌کنه. اگه پیام قبلی حذف شده
-    باشه، دوباره یه پیامِ جدید می‌فرسته و id جدید ذخیره می‌شه.
-    پیام از طرف باتِ کمکی فرستاده می‌شه تا دکمه‌های شیشه‌ای داشته باشه؛ اگه
-    بات کمکی در دسترس نیست، از اکانتِ خودِ کاربر (بدون دکمه).
+    پیامِ زنده: همیشه همون پیامِ صفحه رو آپدیت می‌کنه.
+    سه حالت — به ترتیب امتحان می‌شن:
+      ۱) پیامِ via-bot (مثل پنل، هر چتی حتی جاهایی که بات اد نیست):
+         آپدیت با EditInlineBotMessageRequest از طریق inline_message_id
+      ۲) پیامِ عادیِ بات (جاهایی که بات اد هست): edit_message عادی بات
+      ۳) اکانتِ خودِ کاربر (بدون دکمه) — همیشه کار می‌کنه
+    اگه پیامِ قبلی حذف شده باشه، یه پیامِ جدید می‌سازه.
     """
     buttons = _snakes_buttons(game)
+
+    # --- ۱) پیامِ via-bot: آپدیت با inline_message_id ---
+    inline_mid = game.get("inline_msg_id")
+    if inline_mid is not None and bot_client is not None:
+        try:
+            await bot_client(
+                functions.messages.EditInlineBotMessageRequest(
+                    id=inline_mid, message=text, reply_markup=_snakes_markup(buttons)
+                )
+            )
+            return None  # پیام عادی نیست؛ برگشتِ None طبیعیه
+        except Exception:
+            pass  # منقضی/حذف شده — از این به بعد مسیرهای پایین
+
+    # --- ۲) پیامِ عادیِ بات ---
     mid = game.get("msg_id")
     if mid and bot_client is not None:
         try:
@@ -1022,8 +1049,34 @@ async def snakes_handler(event):
             f"برای برد باید دقیقاً روی {_SNAKES_GOAL} بیفتی؛ اگه بیشتر شدی همون‌جا می‌مونی.\n"
             + ("اگه روی خانه‌ی حریف بیفتی، می‌فرستتش سرِ خونه!\n" if vs_bot else "")
         )
+        # ---- ارسالِ نقشه به‌شکل via-bot (مثل پنل) تا دکمه‌ها در «هر چتی» کار کنن ----
+        start_text = _snakes_board_text(game, f"🎮 بازیِ جدید شروع شد! {mode_line}\n{rules}")
+        if bot_client is not None and runtime.BOT_USERNAME:
+            try:
+                results = await client.inline_query(runtime.BOT_USERNAME, "snakes")
+                if not results:
+                    raise RuntimeError("no inline results")
+                sent = await results[0].click(chat_id, reply_to=event.reply_to_msg_id, silent=False)
+                game["via"] = True
+                # id پیامِ via رو برای آپدیت‌های بعدی (قبل از اولین callback) ذخیره کن
+                try:
+                    for upd in sent.updates if hasattr(sent, "updates") else []:
+                        msg = getattr(upd, "message", None)
+                        mid = getattr(msg, "id", None)
+                        if mid:
+                            game["msg_id"] = mid
+                            break
+                except Exception:
+                    pass
+                try:
+                    await event.delete()
+                except Exception:
+                    pass
+                return sent
+            except Exception:
+                game["via"] = False  # inline فعال نیست — مسیرهای پایین
         board = await _snakes_update(
-            game, chat_id, _snakes_board_text(game, f"🎮 بازیِ جدید شروع شد! {mode_line}\n{rules}")
+            game, chat_id, start_text
         )
         try:  # پیامِ دستور دیگه لازم نیست — نقشه‌ی زنده جایگزینشه
             await event.delete()
@@ -1109,6 +1162,25 @@ async def _snakes_take_turn(chat_id: int, game: dict):
 
 if bot_client is not None:
 
+    @bot_client.on(events.InlineQuery(pattern=rf"^{re.escape('snakes')}"))
+    async def snakes_inline_handler(event):
+        """
+        مثل پنل: اکانت با inline_query از بات نتیجه می‌گیره و result.click(chat_id)
+        همون نقشه (با دکمه‌های واقعیِ بات) رو در «هر چتی» می‌فرسته.
+        """
+        if runtime.SELF_ID is not None and event.sender_id != runtime.SELF_ID:
+            await event.answer([])
+            return
+        text = _snakes_board_text({"pos": 0, "bot": None, "vs_bot": False}, "🎮 شروع شد! 🎲 تاس بزن")
+        builder = event.builder
+        result = builder.article(
+            title="🐍 مارپله پرمیوم",
+            description="نقشه‌ی زنده با دکمه‌های تاس/نقشه/لغو",
+            text=text,
+            buttons=_snakes_buttons({"vs_bot": False}),
+        )
+        await event.answer([result])
+
     @bot_client.on(events.CallbackQuery(pattern=rb"^sn:"))
     async def snakes_callback_handler(event):
         """
@@ -1119,12 +1191,21 @@ if bot_client is not None:
             await event.answer("🎲 این بازی مالِ صاحبِ اکانته!", alert=True)
             return
         action = (event.data or b"").decode()
+        # پیامِ via-bot: برای آپدیت‌های بعدی، inline_message_id رو نگه می‌داریم
+        q_msg = getattr(event.query, "msg_id", None)
         chat_id = event.chat_id
-        game = SNAKES_GAMES.get(chat_id)
+        if chat_id is None and q_msg is not None:
+            chat_id = SNAKES_INLINE_CHATS.get(repr(q_msg))  # از نگاشتِ via
+        game = SNAKES_GAMES.get(chat_id) if chat_id is not None else None
+        if game is not None and q_msg is not None:
+            game["inline_msg_id"] = q_msg
+            SNAKES_INLINE_CHATS[repr(q_msg)] = chat_id
 
         if action == "sn:cancel":
             if game is not None:
                 SNAKES_GAMES.pop(chat_id, None)
+                if q_msg is not None:
+                    SNAKES_INLINE_CHATS.pop(repr(q_msg), None)
                 await event.edit("🚫 بازیِ مار‌پله لغو شد", buttons=None)
             else:
                 await event.answer("بازی‌ای در جریان نیست", alert=True)
