@@ -9,10 +9,12 @@ import urllib.parse
 
 import aiohttp
 from telethon import errors, events
+from telethon.tl.custom import Button
 from telethon.tl.types import InputMediaDice
 
 from ..config import PREFIX
-from ..runtime import client, get_http_session
+from ..runtime import client, bot_client, get_http_session
+from .. import runtime
 from ..repositories import hafez_repo
 from ..storage.stats_store import record_error as _record_error
 from ..utils import pat
@@ -916,22 +918,50 @@ def _snakes_board_text(game: dict, last_line: str = "") -> str:
         parts += ["", last_line]
     parts += [
         "",
-        f"🎯 تاس بنداز: `{PREFIX}مارپله`  |  نقشه: `{PREFIX}مارپله نقشه`  |  لغو: `{PREFIX}مارپله لغو`",
+        f"🎯 با دکمه‌های زیر یا دستور: `{PREFIX}مارپله` تاس | `{PREFIX}مارپله نقشه` | `{PREFIX}مارپله لغو`",
     ]
     return "\n".join(parts)
+
+
+def _snakes_buttons(game: dict):
+    """دکمه‌های زیرِ پیامِ زنده — فقط وقتی باتِ کمکی وصل باشه واقعی می‌شن."""
+    if bot_client is None:
+        return None
+    row1 = [Button.inline("🎲 تاس", b"sn:roll")]
+    if game.get("vs_bot"):
+        row1.append(Button.inline("🗺 نقشه", b"sn:map"))
+    else:
+        row1.append(Button.inline("🗺 نقشه", b"sn:map"))
+    row1.append(Button.inline("🚫 لغو", b"sn:cancel"))
+    return [row1]
 
 
 async def _snakes_update(game, chat_id, text: str, fallback_event=None):
     """
     پیامِ زنده: همیشه همون پیامِ صفحه رو آپدیت می‌کنه. اگه پیام قبلی حذف شده
     باشه، دوباره یه پیامِ جدید می‌فرسته و id جدید ذخیره می‌شه.
+    پیام از طرف باتِ کمکی فرستاده می‌شه تا دکمه‌های شیشه‌ای داشته باشه؛ اگه
+    بات کمکی در دسترس نیست، از اکانتِ خودِ کاربر (بدون دکمه).
     """
+    buttons = _snakes_buttons(game)
     mid = game.get("msg_id")
-    if mid:
+    if mid and bot_client is not None:
+        try:
+            return await bot_client.edit_message(chat_id, mid, text, buttons=buttons)
+        except Exception:
+            pass  # پیام حذف شده/پیدا نشد — پایین دوباره می‌سازیم
+    if mid and bot_client is None:
         try:
             return await client.edit_message(chat_id, mid, text)
         except Exception:
-            pass  # پیام حذف شده/پیدا نشد — پایین دوباره می‌سازیم
+            pass
+    if bot_client is not None:
+        try:
+            msg = await bot_client.send_message(chat_id, text, buttons=buttons, link_preview=False)
+            game["msg_id"] = getattr(msg, "id", None)
+            return msg
+        except Exception:
+            pass  # بات کمکی نتونست (مثلاً تو گروه نیست) — پایین با اکانت می‌فرستیم
     msg = await client.send_message(chat_id, text)
     game["msg_id"] = getattr(msg, "id", None)
     return msg
@@ -953,11 +983,20 @@ async def snakes_handler(event):
         if game is not None:
             mid = game.get("msg_id")  # پیامِ زنده هم پاک بشه
             if mid:
-                try:
-                    await client.delete_messages(chat_id, mid)
-                except Exception:
-                    pass
-            return await event.edit("🚫 بازیِ مار‌پله لغو شد")
+                for cl in (bot_client, client):
+                    if cl is None:
+                        continue
+                    try:
+                        await cl.delete_messages(chat_id, mid)
+                        break
+                    except Exception:
+                        continue
+            await event.edit("🚫 بازیِ مار‌پله لغو شد")
+            try:
+                await event.delete()
+            except Exception:
+                pass
+            return
         return await event.edit("بازی‌ای در حال اجرا نیست")
 
     game = SNAKES_GAMES.get(chat_id)
@@ -983,11 +1022,13 @@ async def snakes_handler(event):
             f"برای برد باید دقیقاً روی {_SNAKES_GOAL} بیفتی؛ اگه بیشتر شدی همون‌جا می‌مونی.\n"
             + ("اگه روی خانه‌ی حریف بیفتی، می‌فرستتش سرِ خونه!\n" if vs_bot else "")
         )
-        board = await event.edit(
-            _snakes_board_text(game, f"🎮 بازیِ جدید شروع شد! {mode_line}\n{rules}")
+        board = await _snakes_update(
+            game, chat_id, _snakes_board_text(game, f"🎮 بازیِ جدید شروع شد! {mode_line}\n{rules}")
         )
-        # پیامِ زنده: از این به بعد همون پیام با هر حرکت آپدیت می‌شه
-        game["msg_id"] = getattr(board, "id", None)
+        try:  # پیامِ دستور دیگه لازم نیست — نقشه‌ی زنده جایگزینشه
+            await event.delete()
+        except Exception:
+            pass
         return board
 
     if not norm and game is None:
@@ -1000,6 +1041,14 @@ async def snakes_handler(event):
         )
 
     # ---------------------------------------------- نوبتِ بازی‌کننده (تاس) ---
+    await _snakes_take_turn(chat_id, game)
+
+
+async def _snakes_take_turn(chat_id: int, game: dict):
+    """
+    یه نوبتِ کامل: تاسِ واقعیِ تلگرام برای بازیکن + حرکت + ربات + آپدیتِ پیامِ زنده.
+    هم از دستور `.مارپله` صدا زده می‌شه هم از دکمه‌ی 🎲 تاس (callback).
+    """
     value = None
     dice_msg = None
     for attempt in range(5):
@@ -1010,10 +1059,11 @@ async def snakes_handler(event):
             continue
         except Exception:
             _record_error()
-            return await _snakes_update(game, chat_id, "❌ خطا در انداختنِ تاس؛ دوباره امتحان کن", event)
+            return await _snakes_update(game, chat_id, "❌ خطا در انداختنِ تاس؛ دوباره امتحان کن")
         if isinstance(value, int) and 1 <= value <= 6:
             break
         await asyncio.sleep(1)  # media تاس هنوز کامل نشده؛ دوباره بخون
+
     try:  # پیامِ تاس اضافیه — چت تمیز بمونه
         if dice_msg:
             await dice_msg.delete()
@@ -1022,7 +1072,7 @@ async def snakes_handler(event):
 
     if not (isinstance(value, int) and 1 <= value <= 6):
         _record_error()
-        return await _snakes_update(game, chat_id, "❌ تاس جواب نداد؛ دوباره بزن", event)
+        return await _snakes_update(game, chat_id, "❌ تاس جواب نداد؛ دوباره بزن")
 
     notes = []
     game["pos"], p_line = _snakes_apply(game["pos"], value)
@@ -1039,7 +1089,6 @@ async def snakes_handler(event):
             game, chat_id,
             _snakes_board_text({"pos": _SNAKES_GOAL, "bot": game.get("bot"), "vs_bot": game["vs_bot"]},
                                "\n".join(notes) + "\n\n🎉 **بردی!**"),
-            event,
         )
 
     # ------------------------------------------------- نوبتِ ربات (خودکار) ---
@@ -1053,9 +1102,55 @@ async def snakes_handler(event):
         if game["bot"] >= _SNAKES_GOAL:
             final = {"pos": game["pos"], "bot": _SNAKES_GOAL, "vs_bot": True}
             del SNAKES_GAMES[chat_id]
-            return await _snakes_update(game, chat_id, _snakes_board_text(final, "\n".join(notes) + "\n\n🤖 **ربات برد! دوباره؟** `مار‌پله شروع ربات`"), event)
+            return await _snakes_update(game, chat_id, _snakes_board_text(final, "\n".join(notes) + "\n\n🤖 **ربات برد! دوباره؟** `مار‌پله شروع ربات`"))
 
-    await _snakes_update(game, chat_id, _snakes_board_text(game, "\n".join(notes)), event)
+    await _snakes_update(game, chat_id, _snakes_board_text(game, "\n".join(notes)))
+
+
+if bot_client is not None:
+
+    @bot_client.on(events.CallbackQuery(pattern=rb"^sn:"))
+    async def snakes_callback_handler(event):
+        """
+        دکمه‌های پیامِ زنده: 🎲 تاس | 🗺 نقشه | 🚫 لغو.
+        فقط صاحبِ اکانت اجازه‌ی کلیک داره (بقیه alert می‌گیرن).
+        """
+        if runtime.SELF_ID is not None and event.sender_id != runtime.SELF_ID:
+            await event.answer("🎲 این بازی مالِ صاحبِ اکانته!", alert=True)
+            return
+        action = (event.data or b"").decode()
+        chat_id = event.chat_id
+        game = SNAKES_GAMES.get(chat_id)
+
+        if action == "sn:cancel":
+            if game is not None:
+                SNAKES_GAMES.pop(chat_id, None)
+                await event.edit("🚫 بازیِ مار‌پله لغو شد", buttons=None)
+            else:
+                await event.answer("بازی‌ای در جریان نیست", alert=True)
+            return
+
+        if game is None:
+            await event.answer("بازی تموم شده؛ `.مارپله شروع` کن", alert=True)
+            return
+
+        if action == "sn:map":
+            await event.answer()
+            return await _snakes_update(game, chat_id, _snakes_board_text(game, "🗺 وضعیت فعلیِ صفحه"))
+
+        if action == "sn:roll":
+            await event.answer("🎲 دارم تاس می‌ندازم...")
+            try:
+                await _snakes_take_turn(chat_id, game)
+            except Exception:
+                _record_error()
+                try:
+                    await event.answer("❌ خطا؛ دوباره امتحان کن", alert=True)
+                except Exception:
+                    pass
+            return
+
+        await event.answer()
 
 
 # ------------------------------------------------------- ۴) حافظه‌ی اعداد ---

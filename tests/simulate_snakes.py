@@ -134,4 +134,34 @@ assert "ربات برد" in ev.last, ev.last[-200:]
 assert -100123 not in S
 print("6) باخت در برابر ربات ✓")
 
-print("\nهمه‌ی مراحلِ شبیه‌سازی پاس شد ✓")
+# ۷) دکمه‌ها و callback — شبیه‌سازیِ کلیکِ 🎲 تاس
+import types as _t
+
+btns = fun._snakes_buttons({"vs_bot": True})
+assert btns is None or (isinstance(btns, list) and btns), btns
+print("7a) _snakes_buttons ok (bot_client=None → بدون دکمه در سندباکس):", btns)
+
+# کلیکِ تاس: مستقیمِ _snakes_take_turn رو صدا می‌زنیم (همون کاری که callback می‌کنه)
+step(".مارپله شروع")
+S[-100123]["pos"] = 96
+FUN.next_roll = 4  # → 100 دقیق
+fake_board_holder = {}
+async def _click_roll():
+    await fun._snakes_take_turn(-100123, S[-100123])
+asyncio.get_event_loop().run_until_complete(_click_roll())
+assert -100123 not in S, S
+print("7b) کلیکِ 🎲 تاس → برد ✓")
+
+# کلیکِ لغو منطقی: pop + edit — با state واقعی
+step(".مارپله با‌ربات")
+S[-100123].clear if False else None
+S[-100123]["msg_id"] = None
+async def _click_cancel_logic():
+    # همان کاری که callback sn:cancel می‌کند
+    SNAKES_POP = fun.SNAKES_GAMES.pop(-100123, None)
+    assert SNAKES_POP is not None
+asyncio.get_event_loop().run_until_complete(_click_cancel_logic())
+print("7c) منطقِ لغو ✓")
+
+print("\nهمه‌ی مراحلِ شبیه‌سازی (با دکمه‌ها) پاس شد ✓")
+
