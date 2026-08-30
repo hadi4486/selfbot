@@ -98,3 +98,10 @@ async def search_word_in_filters(chat_id: int, text: str) -> List[GroupWordFilte
     if not text:
         return []
     return [f for f in filters if _matches(f, text)]
+
+
+async def list_all() -> List[GroupWordFilter]:
+    """همه‌ی فیلترهای کلمه‌ی همه‌ی چت‌ها با هم - فقط برای بکاپِ کاملِ تنظیمات."""
+    async with session_scope() as session:
+        result = await session.execute(select(GroupWordFilter))
+        return list(result.scalars().all())

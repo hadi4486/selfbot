@@ -72,11 +72,11 @@ from ..storage.warn_store import (
     update_warn_settings,
 )
 from ..storage.activity_store import (
-    increment_messages,
     increment_warnings,
     increment_deleted,
     increment_joined,
     increment_left,
+    record_message_activity,
     get_summary,
 )
 from ..storage.stats_store import record_error as _record_error
@@ -530,11 +530,10 @@ async def welcome_watcher(event):
 async def activity_message_counter(event):
     if not event.is_group:
         return
-    try:
-        await increment_messages(event.chat_id)
-    except Exception:
-        _record_error()
-        logger.exception("خطا در ثبتِ آمارِ پیام")
+    # سینک و بدونِ I/O - فقط بافرِ درون‌حافظه‌ای رو افزایش می‌ده؛ ذخیره‌ی واقعی
+    # توسطِ همون ورکرِ دوره‌ایِ stats_saver انجام می‌شه (نگاه کن به
+    # bot/storage/activity_store.py برای توضیح کامل)
+    record_message_activity(event.chat_id)
 
 
 # ------------------------------------------------------------ برچسب‌همه ---

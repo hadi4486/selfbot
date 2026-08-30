@@ -521,6 +521,10 @@ async def quiz_handler(event):
             )
         chosen = int(arg)
         del QUIZ_GAMES[chat_id]
+        if chat_id not in QUIZ_SCORES and len(QUIZ_SCORES) >= _MAX_QUIZ_SCORES:
+            oldest_keys = list(QUIZ_SCORES.keys())[:_MAX_QUIZ_SCORES // 2]
+            for k in oldest_keys:
+                QUIZ_SCORES.pop(k, None)
         score = QUIZ_SCORES.setdefault(chat_id, {"correct": 0, "total": 0})
         score["total"] += 1
         if chosen == game["correct"]:
@@ -571,6 +575,12 @@ async def quiz_handler(event):
     else:
         display_category, display_question, display_options = category, question, options
 
+    # جلوگیری از memory leak: دقیقاً هم‌الگو با GUESS_GAMES - اگه تعداد بازی‌های
+    # هم‌زمان از حداکثر رد شد، نیمی از قدیمی‌ترین‌ها رو پاک کن
+    if len(QUIZ_GAMES) >= _MAX_QUIZ_GAMES:
+        oldest_keys = list(QUIZ_GAMES.keys())[:_MAX_QUIZ_GAMES // 2]
+        for k in oldest_keys:
+            QUIZ_GAMES.pop(k, None)
     QUIZ_GAMES[chat_id] = {"correct": correct_index, "answer_text": display_options[correct_index - 1]}
 
     lines = [f"❓ **کوییز** — _{display_category}_", "", display_question, ""]

@@ -16,6 +16,7 @@ from ..storage.stats_store import (
     record_message as _record_message,
     record_command as _record_command,
 )
+from ..storage.activity_store import flush_message_activity
 from ..utils import pat
 
 @client.on(events.NewMessage())
@@ -119,4 +120,5 @@ async def stats_saver():
     while True:
         await asyncio.sleep(config.STATS_SAVE_INTERVAL)
         await save_stats()
+        await flush_message_activity()
         health.update_worker_status("stats", "ok")

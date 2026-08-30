@@ -134,3 +134,10 @@ async def update_warn_settings(
         await session.flush()
         await session.refresh(obj)
         return obj
+
+
+async def list_all_settings() -> List[GroupWarnSettings]:
+    """تنظیماتِ اخطارِ همه‌ی چت‌ها با هم - فقط برای بکاپِ کاملِ تنظیمات (نه شمارشِ زنده‌ی کاربرها)."""
+    async with session_scope() as session:
+        result = await session.execute(select(GroupWarnSettings))
+        return list(result.scalars().all())

@@ -28,10 +28,10 @@ async def _get_or_create_log(session, chat_id: int, date: Optional[str] = None) 
     return obj
 
 
-async def increment_messages(chat_id: int, count: int = 1) -> None:
+async def increment_messages(chat_id: int, count: int = 1, date: Optional[str] = None) -> None:
     """افزایش شمارش پیام‌های ارسال شده."""
     async with session_scope() as session:
-        obj = await _get_or_create_log(session, chat_id)
+        obj = await _get_or_create_log(session, chat_id, date)
         obj.messages_sent += count
         await session.flush()
 

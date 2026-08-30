@@ -1,7 +1,12 @@
 """
 Health Monitor - وضعیت سنجی تمام بخش‌های سلف‌بات.
 
-نمایش وضعیت هر Worker و سرویس متصل (Telegram, PostgreSQL, AI, Scheduler, Autopost, Assistant, Statistics).
+نمایش وضعیت هر Worker و سرویس متصل (Telegram, PostgreSQL, AI) - و همه‌ی
+Workerهای پس‌زمینه به‌صورتِ خودکار/پویا (نه یه لیستِ ثابت)، از رویِ همون
+چیزی که خودشون از طریقِ update_worker_status() گزارش می‌دن. برای این‌که یه
+Worker جدید توی `.سلامت` دیده بشه، کافیه از همون تابع استفاده کنه - نیازی
+به دست‌زدن به این فایل نیست؛ فقط برای یه اسمِ نمایشیِ بهتر (به‌جایِ خودِ
+کلیدِ داخلی) می‌تونی به WORKER_DISPLAY_NAMES یه ورودی اضافه کنی.
 """
 
 import time
@@ -12,13 +17,27 @@ from sqlalchemy import text
 
 from . import runtime, config
 from .db.engine import session_scope
-from .db.models import StatsSummary, ScheduledJob
 
 logger = logging.getLogger("selfbot.health")
 
 # ذخیره آخرین وضعیت هر سرویس برای تشخیص تغییرات
 _last_health: Dict[str, Any] = {}
 _worker_status: Dict[str, Dict[str, Any]] = {}
+
+# یه Worker اگه بیش از این مدت (ثانیه) هیچ تیکی نزنه، «مرده» حساب می‌شه.
+# همه‌ی Workerهای فعلی حداکثر هر ۶۰ ثانیه یک‌بار تیک می‌زنن، پس ۳۰۰ ثانیه
+# (۵ برابرِ کندترینِ فاصله) یه حاشیه‌ی امنِ معقوله.
+WORKER_STALE_SECONDS = 300
+
+WORKER_DISPLAY_NAMES = {
+    "scheduler": "Scheduler",
+    "autopost": "Autopost",
+    "assistant": "Assistant",
+    "stats": "Statistics",
+    "daily_digest": "Daily Digest",
+    "message_tracker_cleanup": "Message Tracker",
+    "price_alert": "Price Alerts",
+}
 
 
 def get_uptime() -> str:
@@ -72,47 +91,21 @@ async def check_ai() -> bool:
         return False
 
 
-async def check_scheduler() -> bool:
-    """بررسی Worker زمان‌بند (با چک کردن آخرین اجرا)."""
-    info = _worker_status.get("scheduler", {})
+def check_worker(worker_name: str) -> bool:
+    """
+    یه Worker رو «سالم» حساب می‌کنه اگه: (۱) حداقل یه‌بار توی
+    WORKER_STALE_SECONDS ثانیه‌ی اخیر تیک زده باشه، *و* (۲) آخرین تیکش
+    status="error" نبوده باشه - قبلاً فقط شرطِ (۱) چک می‌شد، یعنی Workerی
+    که هر دور با خطا مواجه می‌شه ولی هنوز «زنده»ست (تیک می‌زنه) همیشه 🟢
+    نشون داده می‌شد، حتی وقتی هر بار fail می‌کرد.
+    """
+    info = _worker_status.get(worker_name, {})
     last_run = info.get("last_run")
     if last_run is None:
         return False
-    # اگر بیش از 5 دقیقه از آخرین اجرا گذشته، احتمالاً مشکل داره
-    if time.time() - last_run > 300:
+    if time.time() - last_run > WORKER_STALE_SECONDS:
         return False
-    return True
-
-
-async def check_autopost() -> bool:
-    """بررسی Worker ارسال‌خودکار."""
-    info = _worker_status.get("autopost", {})
-    last_run = info.get("last_run")
-    if last_run is None:
-        return False
-    if time.time() - last_run > 300:
-        return False
-    return True
-
-
-async def check_assistant() -> bool:
-    """بررسی Worker منشی."""
-    info = _worker_status.get("assistant", {})
-    last_run = info.get("last_run")
-    if last_run is None:
-        return False
-    if time.time() - last_run > 300:
-        return False
-    return True
-
-
-async def check_stats() -> bool:
-    """بررسی Worker آمار."""
-    info = _worker_status.get("stats", {})
-    last_run = info.get("last_run")
-    if last_run is None:
-        return False
-    if time.time() - last_run > 300:
+    if info.get("status") == "error":
         return False
     return True
 
@@ -123,13 +116,13 @@ async def get_health_report() -> Dict[str, Any]:
         "telegram": await check_telegram(),
         "postgresql": await check_postgresql(),
         "ai": await check_ai(),
-        "scheduler": await check_scheduler(),
-        "autopost": await check_autopost(),
-        "assistant": await check_assistant(),
-        "stats": await check_stats(),
     }
+    # همه‌ی Workerهایی که تا الان حداقل یه‌بار update_worker_status صدا
+    # زدن رو خودکار اضافه می‌کنه - نیازی به لیستِ ثابت نیست، پس Workerِ
+    # جدید فراموش نمی‌شه.
+    for worker_name in _worker_status:
+        results[worker_name] = check_worker(worker_name)
 
-    # محاسبه تعداد سرویس‌های سبز
     ok_count = sum(1 for v in results.values() if v)
     total = len(results)
 
@@ -148,29 +141,37 @@ def format_health_report(report: Dict[str, Any]) -> str:
     lines.append(f"📈 **خلاصه:** {report['summary']}")
     lines.append("")
 
-    status_map = {
-        "telegram": "Telegram",
-        "postgresql": "PostgreSQL",
-        "ai": "AI",
-        "scheduler": "Scheduler",
-        "autopost": "Autopost",
-        "assistant": "Assistant",
-        "stats": "Statistics",
-    }
+    core_map = {"telegram": "Telegram", "postgresql": "PostgreSQL", "ai": "AI"}
+    unhealthy_workers = []
 
-    for key, display in status_map.items():
+    for key, display in core_map.items():
         ok = report["status"].get(key, False)
         icon = "🟢" if ok else "🔴"
         lines.append(f"{icon} **{display}**")
 
-    # اضافه کردن اطلاعات دقیق‌تر برای Workerهای خراب
-    if not report["status"].get("scheduler"):
-        info = _worker_status.get("scheduler", {})
+    lines.append("")
+    lines.append("**Workerهای پس‌زمینه:**")
+    worker_keys = [k for k in report["status"] if k not in core_map]
+    if not worker_keys:
+        lines.append("   (هنوز هیچ Workerی تیک نزده)")
+    for key in worker_keys:
+        ok = report["status"][key]
+        display = WORKER_DISPLAY_NAMES.get(key, key)
+        icon = "🟢" if ok else "🔴"
+        lines.append(f"{icon} **{display}**")
+        if not ok:
+            unhealthy_workers.append(key)
+
+    # اطلاعاتِ دقیق‌تر برای هر Workerِ خراب (نه فقط scheduler مثلِ قبل)
+    for key in unhealthy_workers:
+        info = _worker_status.get(key, {})
+        display = WORKER_DISPLAY_NAMES.get(key, key)
         if info.get("last_error"):
-            lines.append(f"   └ آخرین خطا: {info['last_error'][:100]}")
+            err_preview = info["last_error"][:100]
+            lines.append(f"   └ {display} - آخرین خطا: {err_preview}")
         if info.get("last_run"):
             elapsed = time.time() - info["last_run"]
-            lines.append(f"   └ آخرین اجرا: {int(elapsed)} ثانیه پیش")
+            lines.append(f"   └ {display} - آخرین اجرا: {int(elapsed)} ثانیه پیش")
 
     return "\n".join(lines)
 

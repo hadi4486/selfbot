@@ -46,4 +46,5 @@ from . import (
     automation,
     plugins_cmd,
     message_tracker,
+    price_alert,
 )

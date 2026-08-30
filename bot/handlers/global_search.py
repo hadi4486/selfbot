@@ -79,6 +79,14 @@ def _md_escape(text: str) -> str:
     return _MD_SPECIAL_RE.sub(r"\\\1", text)
 
 
+def _truncate(text: str, n: int) -> str:
+    """کوتاه‌کردنِ متن به حداکثر n کاراکتر - «...» رو فقط وقتی اضافه می‌کنه
+    که واقعاً چیزی بریده شده باشه، نه همیشه (وگرنه متنِ کوتاه‌تر از n هم
+    گمراه‌کننده «...» می‌گرفت، انگار چیزی ازش افتاده)."""
+    text = text or ""
+    return text[:n] + ("..." if len(text) > n else "")
+
+
 def _peer_title(peer, chats_map: dict, users_map: dict) -> str:
     if isinstance(peer, PeerUser):
         u = users_map.get(peer.user_id)
@@ -151,7 +159,7 @@ def _extract_filename(m) -> str:
 async def _local_notes(query: str) -> Tuple[str, List[str]]:
     try:
         notes = await notes_repo.search_notes(query, limit=LOCAL_SECTION_LIMIT)
-        items = [f"`{_md_escape(n.key)}`: {_md_escape(n.text[:80])}..." for n in notes]
+        items = [f"`{_md_escape(n.key)}`: {_md_escape(_truncate(n.text, 80))}" for n in notes]
         return "یادداشت‌ها", items
     except Exception:
         logger.exception("خطا در جستجوی یادداشت‌ها")
@@ -164,7 +172,7 @@ async def _local_ai_memory(query: str) -> Tuple[str, List[str]]:
         items = []
         for cat, mems in memories.items():
             for m in mems:
-                items.append(f"[{_md_escape(cat)}] `{_md_escape(m.key)}`: {_md_escape(m.value[:80])}...")
+                items.append(f"[{_md_escape(cat)}] `{_md_escape(m.key)}`: {_md_escape(_truncate(m.value, 80))}")
         return "حافظه AI", items[:LOCAL_SECTION_LIMIT]
     except Exception:
         logger.exception("خطا در جستجوی حافظه‌ی AI")
@@ -191,7 +199,7 @@ async def _local_inbox(query: str) -> Tuple[str, List[str]]:
         inbox_items = await inbox_repo.search_items(query, limit=LOCAL_SECTION_LIMIT)
         items = []
         for i in inbox_items:
-            label = f"{_md_escape(i.sender_name or 'ناشناس')}: {_md_escape(i.text[:60])}..."
+            label = f"{_md_escape(i.sender_name or 'ناشناس')}: {_md_escape(_truncate(i.text, 60))}"
             link = _message_link(i.chat_id, i.message_id)
             items.append(_fmt_item(label, link))
         return "صندوق ورودی", items
@@ -204,7 +212,7 @@ async def _local_scheduler(query: str) -> Tuple[str, List[str]]:
     try:
         jobs = await scheduler_repo.search_jobs(query, limit=LOCAL_SECTION_LIMIT)
         items = [
-            f"#{j.id} {_md_escape(j.text[:40])}... ({j.run_at.strftime('%Y-%m-%d %H:%M')})"
+            f"#{j.id} {_md_escape(_truncate(j.text, 40))} ({j.run_at.strftime('%Y-%m-%d %H:%M')})"
             for j in jobs
         ]
         return "زمان‌بندی", items
@@ -218,7 +226,7 @@ async def _local_settings(query: str) -> Tuple[str, List[str]]:
         settings = await settings_repo.get_all_settings()
         q = query.lower()
         matched = {k: v for k, v in settings.items() if q in k.lower() or q in str(v).lower()}
-        items = [f"`{_md_escape(k)}`: {_md_escape(str(v)[:40])}..." for k, v in list(matched.items())[:LOCAL_SECTION_LIMIT]]
+        items = [f"`{_md_escape(k)}`: {_md_escape(_truncate(str(v), 40))}" for k, v in list(matched.items())[:LOCAL_SECTION_LIMIT]]
         return "تنظیمات", items
     except Exception:
         logger.exception("خطا در جستجوی تنظیمات")

@@ -337,6 +337,33 @@ def _price_line(current: dict, key: str, label: str, unit: str) -> str:
     return f"› {label}: **{price}** {unit}"
 
 
+def find_price_item(query: str):
+    """
+    پیداکردنِ یه آیتمِ *مشخص* (نه یه گروه) با بخشی از اسمش - برای هشدارِ
+    قیمت (`.هشدارقیمت`) که برخلافِ `.قیمت` به یه آیتمِ واحد نیاز داره، نه
+    فهرستی از نتایج. اگه دقیقاً یکی مچ بشه (key, label, unit) برمی‌گردونه؛
+    وگرنه None (چه صفر مچ، چه بیش‌ازیک - تا هشدار رو رویِ آیتمِ اشتباه ثبت نکنه).
+    """
+    if not query:
+        return None
+    matches = [
+        (key, label, unit)
+        for _, _, items in PRICE_GROUPS
+        for key, label, unit in items
+        if query in label
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def parse_price_value(raw: str) -> float:
+    """
+    رشته‌ی قیمتِ فیدِ TGJU (مثلِ "58,500,000" یا "1,987.45") رو به float
+    تبدیل می‌کنه. کاماها رو حذف می‌کنه چون فیدِ TGJU همیشه با جداکننده‌ی
+    هزارگان برمی‌گردونه.
+    """
+    return float(str(raw).replace(",", "").strip())
+
+
 @client.on(events.NewMessage(outgoing=True, pattern=pat(["قیمت", "price"])))
 async def price_handler(event):
     arg = (event.pattern_match.group(1) or "").strip()

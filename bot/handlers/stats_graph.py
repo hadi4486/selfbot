@@ -8,7 +8,7 @@ from telethon import events
 
 from ..config import PREFIX
 from ..runtime import client
-from ..storage.activity_store import get_summary
+from ..storage.activity_store import get_pending_message_count
 from ..utils import pat
 
 
@@ -31,6 +31,12 @@ async def _generate_activity_graph(chat_id: int, days: int = 7):
     deleted = [log.messages_deleted for log in logs]
     joined = [log.members_joined for log in logs]
     left = [log.members_left for log in logs]
+
+    # پیام‌هایی که هنوز flush نشدن رو به «امروز» اضافه می‌کنیم (اگه امروز جزوِ
+    # بازه‌ی نمایش‌داده‌شده باشه) تا گراف تا لحظه‌ی اجرا به‌روز باشه
+    today_str = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d")
+    if dates and dates[0] == today_str:
+        messages[0] += get_pending_message_count(chat_id)
     
     # ایجاد نمودار
     fig, ax = plt.subplots(figsize=(10, 6))

@@ -15,6 +15,7 @@ from ..storage.stats_store import record_error as _record_error
 
 async def _extract_text_from_image(image_bytes: bytes) -> str:
     """استخراج متن از تصویر با استفاده از Tesseract (محلی) یا AI."""
+    local_error = None
     try:
         import pytesseract
         from PIL import Image
@@ -33,25 +34,32 @@ async def _extract_text_from_image(image_bytes: bytes) -> str:
             return text.strip()
         finally:
             os.unlink(temp_path)
-    except ImportError:
-        # اگر Tesseract نصب نیست، از AI استفاده کن
-        if AI_API_KEY:
-            try:
-                # تبدیل به base64
-                b64 = base64.b64encode(image_bytes).decode('ascii')
-                messages = [
-                    {"role": "system", "content": "متن موجود در تصویر را استخراج کن. فقط متن را برگردان."},
-                    {"role": "user", "content": [
-                        {"type": "text", "text": "متن این تصویر را استخراج کن."},
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}
-                    ]}
-                ]
-                response = await ai.ask_ai(messages, max_tokens=500)
-                return response.strip()
-            except Exception as e:
-                raise Exception(f"خطا در استخراج با AI: {e}")
-        else:
-            raise Exception("Tesseract نصب نیست و AI_API_KEY تنظیم نشده است.")
+    except Exception as e:
+        # هم نصب‌نبودنِ پکیجِ pytesseract (ImportError) و هم نصب‌نبودنِ خودِ
+        # باینریِ tesseract-ocr روی سیستم (TesseractNotFoundError - که
+        # ImportError نیست و قبلاً این fallback رو دور می‌زد) و هر خطای
+        # دیگه‌ای توی موتورِ محلی، باید بره سراغِ AI - نه اینکه کاربر یه
+        # Exceptionِ خام ببینه.
+        local_error = e
+
+    # موتورِ محلی جواب نداد؛ اگه AI تنظیم شده، از اون استفاده کن
+    if AI_API_KEY:
+        try:
+            # تبدیل به base64
+            b64 = base64.b64encode(image_bytes).decode('ascii')
+            messages = [
+                {"role": "system", "content": "متن موجود در تصویر را استخراج کن. فقط متن را برگردان."},
+                {"role": "user", "content": [
+                    {"type": "text", "text": "متن این تصویر را استخراج کن."},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}
+                ]}
+            ]
+            response = await ai.ask_ai(messages, max_tokens=500)
+            return response.strip()
+        except Exception as e:
+            raise Exception(f"خطا در استخراج با AI: {e}")
+    else:
+        raise Exception(f"استخراجِ محلی ناموفق بود ({local_error}) و AI_API_KEY هم تنظیم نشده است.")
 
 
 @client.on(events.NewMessage(outgoing=True, pattern=pat(["عکس‌ترجمه", "imgtranslate"])))

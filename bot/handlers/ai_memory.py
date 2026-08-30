@@ -94,11 +94,12 @@ async def _add_memory(event, args):
 
     try:
         memory = await ai_memory_repo.save_memory(category, key, value)
+        value_preview = memory.value[:100] + ("..." if len(memory.value) > 100 else "")
         await event.edit(
             f"✅ حافظه ذخیره شد.\n"
             f"📁 دسته: {memory.category}\n"
             f"🔑 کلید: {memory.key}\n"
-            f"📝 مقدار: {memory.value[:100]}..."
+            f"📝 مقدار: {value_preview}"
         )
     except Exception as e:
         await event.edit(f"❌ خطا: {e}")

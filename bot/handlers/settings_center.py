@@ -18,7 +18,7 @@ from telethon import events
 from ..config import PREFIX
 from ..runtime import client
 from ..storage.assistant_store import assistant_state, save_assistant
-from ..storage.autopost_store import autopost_state, save_autopost
+from ..storage.autopost_store import autopost_state, save_autopost, reset_autopost_timer as _reset_autopost_timer
 from ..storage.daily_digest_store import daily_digest_state, save_daily_digest
 from ..storage.font_store import font_state, save_font_state
 from ..storage.settings_toggles import set_toggle, toggles
@@ -131,6 +131,11 @@ async def _set_setting(event, key: str, value: str):
         await save_assistant()
     elif key == "autopost_enabled":
         autopost_state["enabled"] = enabled
+        if enabled:
+            # بدونِ این، تایمرِ فاصله ممکنه از یه فعال‌سازیِ خیلی قبل‌تر مونده
+            # باشه و اولین tickِ کارگر (حداکثر ۵ ثانیه‌ی دیگه) فوری یه پست
+            # بفرسته - دقیقاً هم‌رفتار با `.ارسال‌خودکار روشن`
+            _reset_autopost_timer()
         await save_autopost()
     elif key == "daily_digest_enabled":
         daily_digest_state["enabled"] = enabled

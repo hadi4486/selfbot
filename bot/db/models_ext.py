@@ -19,6 +19,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     DateTime,
+    Float,
     Index,
     Integer,
     String,
@@ -330,5 +331,27 @@ class MessageTrackerChannel(Base):
     chat_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     title: Mapped[str] = mapped_column(Text, nullable=False)
     added_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+# -------------------------------------------------------- Price Alerts ---
+class PriceAlert(Base):
+    """هشدارِ قیمت (`.هشدارقیمت`) - وقتی قیمتِ یه قلم از TGJU به یه حدِ معین برسه، اطلاع می‌ده."""
+
+    __tablename__ = "price_alerts"
+    __table_args__ = (
+        Index("ix_price_alerts_chat_id", "chat_id"),
+        Index("ix_price_alerts_triggered", "triggered"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    item_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    item_label: Mapped[str] = mapped_column(Text, nullable=False)
+    direction: Mapped[str] = mapped_column(String(8), nullable=False)  # "above" | "below"
+    target_price: Mapped[float] = mapped_column(Float, nullable=False)
+    triggered: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

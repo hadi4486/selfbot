@@ -3,6 +3,7 @@
 """
 import logging
 import json
+import time
 from typing import Dict, Any, Optional, List
 
 from .repositories import automation_repo
@@ -131,6 +132,96 @@ async def _handle_save(rule, context: Dict[str, Any]):
         logger.error(f"خطا در ذخیره: {e}")
 
 
+@register_action("guard")
+async def _handle_guard(rule, context: Dict[str, Any]):
+    """
+    روشن/خاموش‌کردنِ یکی از فیلترهای مدیریتِ گروه برای چتی که پیام توش اومده.
+    action_value فرمتش: "<فیلتر>:<on|off>" - فیلتر یکی از:
+    link (لینک), porn (پورن), spam (اسپم), profanity (فحش).
+    مثال: "spam:on" یا "profanity:off"
+    """
+    from .storage.group_guard_store import (
+        set_link_filter, set_porn_filter, set_spam_filter, set_profanity_filter,
+    )
+
+    chat_id = context.get("chat_id")
+    if not chat_id:
+        return
+
+    raw = (rule.action_value or "").strip().lower()
+    if ":" not in raw:
+        logger.warning("مقدارِ نامعتبر برای عملیاتِ guard (باید <فیلتر>:<on|off> باشه): %r", rule.action_value)
+        return
+    filter_name, _, state = raw.partition(":")
+    filter_name = filter_name.strip()
+    enabled = state.strip() in ("on", "روشن", "true", "1")
+
+    setters = {
+        "link": set_link_filter,
+        "لینک": set_link_filter,
+        "porn": set_porn_filter,
+        "پورن": set_porn_filter,
+        "spam": set_spam_filter,
+        "اسپم": set_spam_filter,
+        "profanity": set_profanity_filter,
+        "فحش": set_profanity_filter,
+    }
+    setter = setters.get(filter_name)
+    if setter is None:
+        logger.warning("فیلترِ ناشناخته برای عملیاتِ guard: %r", filter_name)
+        return
+    try:
+        await setter(chat_id, enabled)
+    except Exception as e:
+        logger.error(f"خطا در اجرای عملیاتِ guard: {e}")
+
+
+@register_action("backup")
+async def _handle_backup(rule, context: Dict[str, Any]):
+    """گرفتنِ یه بکاپِ کاملِ تنظیمات و ارسالش به Saved Messages."""
+    from .handlers.backup import send_settings_backup
+
+    try:
+        await send_settings_backup(caption_note=f"⚡ بکاپِ خودکار (از قانونِ اتوماسیونِ «{rule.name}»)")
+    except Exception as e:
+        logger.error(f"خطا در بکاپِ خودکار: {e}")
+
+
+@register_action("autopost")
+async def _handle_autopost(rule, context: Dict[str, Any]):
+    """یه دورِ ارسالِ خودکار رو فوری صف می‌کنه (دقیقاً هم‌رفتار با `.ارسال‌خودکار فوری`)."""
+    from .storage.autopost_store import set_force_now
+
+    try:
+        set_force_now(True)
+    except Exception as e:
+        logger.error(f"خطا در صف‌کردنِ ارسالِ خودکار: {e}")
+
+
+# جلوگیری از اجرای بیش‌ازحدِ یه قانون روی یه چت (مثلاً وقتی یه نفر پیام‌های
+# پشتِ‌سرهم می‌فرسته که کلیدواژه‌ی trigger توشونه): بدونِ این، عملیات‌های
+# پرهزینه مثلِ ai (هزینه‌ی API)، backup (I/O + کوئریِ دیتابیس)، یا reply
+# (ریسکِ محدودیتِ فلادِ تلگرام) می‌تونستن ده‌ها بار در ثانیه اجرا بشن.
+_MIN_TRIGGER_INTERVAL_SECONDS = 5
+_MAX_COOLDOWN_ENTRIES = 500
+_last_triggered: Dict[tuple, float] = {}
+
+
+def _check_and_update_cooldown(rule_id: int, chat_id: Any) -> bool:
+    """True یعنی مجازه اجرا بشه؛ False یعنی هنوز توی cooldown-ه و باید رد بشه."""
+    key = (rule_id, chat_id)
+    now = time.time()
+    last = _last_triggered.get(key, 0.0)
+    if now - last < _MIN_TRIGGER_INTERVAL_SECONDS:
+        return False
+    if key not in _last_triggered and len(_last_triggered) >= _MAX_COOLDOWN_ENTRIES:
+        oldest_keys = sorted(_last_triggered, key=_last_triggered.get)[: _MAX_COOLDOWN_ENTRIES // 2]
+        for k in oldest_keys:
+            _last_triggered.pop(k, None)
+    _last_triggered[key] = now
+    return True
+
+
 async def trigger_event(event_type: str, context: Dict[str, Any]):
     """
     اجرای قوانین منطبق با یک رویداد.
@@ -153,6 +244,9 @@ async def trigger_event(event_type: str, context: Dict[str, Any]):
                 condition_met = await _evaluate_condition(rule.condition, context)
                 if not condition_met:
                     continue
+
+            if not _check_and_update_cooldown(rule.id, context.get("chat_id")):
+                continue
 
             # اجرای عملیات
             handler = _action_handlers.get(rule.action_type)

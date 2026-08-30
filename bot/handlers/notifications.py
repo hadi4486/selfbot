@@ -89,7 +89,7 @@ async def _show_rules(event):
     for rule in rules:
         status = "✅" if rule.enabled else "❌"
         lines.append(f"{status} `#{rule.id}` **{rule.name}**")
-        lines.append(f"   ▸ نوع: {rule.trigger_type} | مقدار: {rule.trigger_value[:40]}...")
+        lines.append(f"   ▸ نوع: {rule.trigger_type} | مقدار: {rule.trigger_value[:40]}{'...' if len(rule.trigger_value) > 40 else ''}")
         lines.append(f"   ▸ عملیات: {rule.action_type} {rule.action_value or ''}")
         lines.append("")
 
@@ -146,7 +146,7 @@ async def _delete_rule(event, args):
     rule_id = int(args[0])
     success = await notification_repo.delete_rule(rule_id)
     if success:
-        await event.edit(f"✅ قا��ون {rule_id} حذف شد.")
+        await event.edit(f"✅ قانون {rule_id} حذف شد.")
     else:
         await event.edit(f"❌ قانون {rule_id} یافت نشد.")
 

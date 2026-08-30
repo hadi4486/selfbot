@@ -79,7 +79,10 @@ async def _show_rules(event):
             f"عملیات: reply, ai, note, schedule, notify, guard, backup, autopost\n"
             f"⚠️ فعلاً فقط رویدادِ `message` واقعاً trigger می‌شه (روی هر پیامِ ورودی)؛ "
             f"بقیه‌ی رویدادها (schedule/command/user_join/user_leave) ذخیره می‌شن ولی هنوز به منبعِ "
-            f"رویدادِ خودشون وصل نیستن."
+            f"رویدادِ خودشون وصل نیستن.\n"
+            f"📌 مقدارِ عملیاتِ `guard`: `<فیلتر>:<on|off>` — فیلتر یکی از link/porn/spam/profanity "
+            f"(مثال: `spam:on`). عملیاتِ `backup`/`autopost` مقداری نمی‌خوان.\n"
+            f"⏱ هر قانون حداکثر هر ۵ ثانیه یک‌بار روی یه چتِ مشخص اجرا می‌شه (جلوگیری از اجرای مکرر)."
         )
 
     lines = ["⚡ **موتور اتوماسیون**", ""]
@@ -89,7 +92,7 @@ async def _show_rules(event):
         lines.append(f"{status} `#{rule.id}` **{rule.name}**")
         lines.append(f"   ▸ رویداد: {rule.event_type} → عملیات: {rule.action_type}")
         if rule.condition:
-            lines.append(f"   ▸ شرط: {rule.condition[:40]}...")
+            lines.append(f"   ▸ شرط: {rule.condition[:40]}{'...' if len(rule.condition) > 40 else ''}")
         lines.append("")
 
     lines.append("")
@@ -102,9 +105,9 @@ async def _show_rules(event):
 
 async def _create_rule(event, args):
     """ایجاد قانون اتوماسیون جدید."""
-    if len(args) < 4:
+    if len(args) < 3:
         return await event.edit(
-            f"❌ استفاده: `{PREFIX}اتوماسیون جدید <نام> <رویداد> <عملیات> <مقدار>`\n"
+            f"❌ استفاده: `{PREFIX}اتوماسیون جدید <نام> <رویداد> <عملیات> [مقدار]`\n"
             f"رویدادها: message, schedule, command, user_join, user_leave\n"
             f"عملیات: reply, ai, note, schedule, notify, guard, backup, autopost"
         )
@@ -112,15 +115,18 @@ async def _create_rule(event, args):
     name = args[0]
     event_type = args[1]
     action_type = args[2]
-    action_value = " ".join(args[3:])
+    action_value = " ".join(args[3:])  # برای backup/autopost نیازی نیست، می‌تونه خالی بمونه
 
     valid_events = ["message", "schedule", "command", "user_join", "user_leave"]
     valid_actions = ["reply", "ai", "note", "schedule", "notify", "guard", "backup", "autopost"]
+    actions_needing_value = {"reply", "ai", "note", "schedule", "notify", "guard"}
 
     if event_type not in valid_events:
         return await event.edit(f"❌ رویداد نامعتبر. رویدادها: {', '.join(valid_events)}")
     if action_type not in valid_actions:
         return await event.edit(f"❌ عملیات نامعتبر. عملیات: {', '.join(valid_actions)}")
+    if action_type in actions_needing_value and not action_value:
+        return await event.edit(f"❌ عملیاتِ `{action_type}` نیاز به مقدار داره: `{PREFIX}اتوماسیون جدید <نام> <رویداد> {action_type} <مقدار>`")
 
     try:
         rule = await automation_repo.create_rule(

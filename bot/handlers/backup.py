@@ -24,11 +24,21 @@ from ..storage.assistant_store import (
     save_assistant,
 )
 from ..storage.font_store import font_state, save_font_state
+from ..storage.settings_toggles import toggles as _global_toggles, set_toggle as _set_toggle
 from ..storage.group_guard_store import (
     group_guard_state,
     set_link_filter as _set_link_filter,
+    set_porn_filter as _set_porn_filter,
+    set_spam_filter as _set_spam_filter,
+    set_profanity_filter as _set_profanity_filter,
     set_welcome_enabled as _set_welcome_enabled,
     set_welcome_text as _set_welcome_text,
+)
+from ..repositories import (
+    daily_digest_repo,
+    message_tracker_repo,
+    warn_repo,
+    word_filter_repo,
 )
 from ..storage.stats_store import STATS, record_error as _record_error
 from ..utils import pat
@@ -46,7 +56,7 @@ async def _gather_config_snapshot():
     """
     return {
         "_kind": "selfbot_config_backup",
-        "_version": 3,
+        "_version": 4,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "notes": await load_notes(),
         "autopost": dict(autopost_state),
@@ -77,10 +87,44 @@ async def _gather_config_snapshot():
         },
         "group_guard": {
             "link_filter_chats": list(group_guard_state["link_filter_chats"]),
+            "porn_filter_chats": list(group_guard_state["porn_filter_chats"]),
+            "spam_filter_chats": list(group_guard_state["spam_filter_chats"]),
+            "profanity_filter_chats": list(group_guard_state["profanity_filter_chats"]),
             "welcome": {
                 str(cid): entry for cid, entry in group_guard_state["welcome"].items()
             },
         },
+        "word_filter": [
+            {
+                "chat_id": f.chat_id,
+                "word": f.word,
+                "action": f.action,
+                "case_sensitive": f.case_sensitive,
+                "is_regex": f.is_regex,
+            }
+            for f in await word_filter_repo.list_all()
+        ],
+        "warn_settings": [
+            {
+                "chat_id": s.chat_id,
+                "enabled": s.enabled,
+                "warn_limit": s.warn_limit,
+                "action_on_limit": s.action_on_limit,
+                "mute_duration_minutes": s.mute_duration_minutes,
+                "auto_reset_days": s.auto_reset_days,
+            }
+            for s in await warn_repo.list_all_settings()
+        ],
+        "daily_digest": {
+            "settings": (lambda s: {
+                "enabled": s.enabled, "mode": s.mode, "hour": s.hour, "minute": s.minute,
+            })(await daily_digest_repo.get_settings()),
+            "chats": await daily_digest_repo.list_chats(),
+        },
+        "message_tracker": {
+            "channels": await message_tracker_repo.list_channels(),
+        },
+        "global_toggles": dict(_global_toggles),
         "stats": dict(STATS),
     }
 
@@ -157,6 +201,21 @@ async def _apply_config_snapshot(data):
                 await _set_link_filter(int(cid), True)
             except (TypeError, ValueError):
                 continue
+        for cid in g.get("porn_filter_chats", []):
+            try:
+                await _set_porn_filter(int(cid), True)
+            except (TypeError, ValueError):
+                continue
+        for cid in g.get("spam_filter_chats", []):
+            try:
+                await _set_spam_filter(int(cid), True)
+            except (TypeError, ValueError):
+                continue
+        for cid in g.get("profanity_filter_chats", []):
+            try:
+                await _set_profanity_filter(int(cid), True)
+            except (TypeError, ValueError):
+                continue
         welcome = g.get("welcome")
         if isinstance(welcome, dict):
             for cid_str, entry in welcome.items():
@@ -171,7 +230,109 @@ async def _apply_config_snapshot(data):
                 await _set_welcome_enabled(cid, bool(entry.get("enabled")))
         applied.append("مدیریت گروه پیشرفته")
 
+    if isinstance(data.get("word_filter"), list) and data["word_filter"]:
+        count = 0
+        for f in data["word_filter"]:
+            if not isinstance(f, dict):
+                continue
+            try:
+                cid = int(f["chat_id"])
+                word = str(f["word"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            try:
+                await word_filter_repo.add_word_filter(
+                    cid, word,
+                    action=f.get("action", "delete"),
+                    case_sensitive=bool(f.get("case_sensitive", False)),
+                    is_regex=bool(f.get("is_regex", False)),
+                )
+                count += 1
+            except ValueError:
+                pass  # از قبل وجود داشت - نادیده بگیر، خطا نیست
+        applied.append(f"فیلترِ کلمات ({count} مورد)")
+
+    if isinstance(data.get("warn_settings"), list) and data["warn_settings"]:
+        for s in data["warn_settings"]:
+            if not isinstance(s, dict):
+                continue
+            try:
+                cid = int(s["chat_id"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            await warn_repo.update_warn_settings(
+                cid,
+                enabled=s.get("enabled"),
+                warn_limit=s.get("warn_limit"),
+                action_on_limit=s.get("action_on_limit"),
+                mute_duration_minutes=s.get("mute_duration_minutes"),
+                auto_reset_days=s.get("auto_reset_days"),
+            )
+        applied.append("تنظیماتِ اخطار")
+
+    if isinstance(data.get("daily_digest"), dict):
+        dd = data["daily_digest"]
+        settings = dd.get("settings")
+        if isinstance(settings, dict):
+            current = await daily_digest_repo.get_settings()
+            await daily_digest_repo.save_settings(
+                enabled=settings.get("enabled", current.enabled),
+                mode=settings.get("mode", current.mode),
+                hour=settings.get("hour", current.hour),
+                minute=settings.get("minute", current.minute),
+                last_run_date=current.last_run_date,
+            )
+        chats = dd.get("chats")
+        if isinstance(chats, dict):
+            await daily_digest_repo.clear_chats()
+            for cid_str, title in chats.items():
+                try:
+                    await daily_digest_repo.upsert_chat(int(cid_str), title)
+                except (TypeError, ValueError):
+                    continue
+        applied.append("خلاصه‌روز")
+
+    if isinstance(data.get("message_tracker"), dict):
+        channels = data["message_tracker"].get("channels")
+        if isinstance(channels, dict):
+            await message_tracker_repo.clear_channels()
+            for cid_str, title in channels.items():
+                try:
+                    await message_tracker_repo.upsert_channel(int(cid_str), title)
+                except (TypeError, ValueError):
+                    continue
+            applied.append("ردیابِ ویرایش/حذف")
+
+    if isinstance(data.get("global_toggles"), dict):
+        for key, value in data["global_toggles"].items():
+            if key in _global_toggles:
+                try:
+                    await _set_toggle(key, bool(value))
+                except Exception:
+                    continue
+        applied.append("سوییچ‌های سراسری")
+
     return applied
+
+
+async def send_settings_backup(caption_note: str = "") -> None:
+    """
+    گردآوری و ارسالِ بکاپِ کاملِ تنظیمات به Saved Messages - هم توسطِ
+    `.پشتیبان تنظیمات` صدا زده می‌شه، هم توسطِ عملیاتِ backup توی موتورِ
+    اتوماسیون (bot/automation_engine.py).
+    """
+    snapshot = await _gather_config_snapshot()
+    content = json.dumps(snapshot, ensure_ascii=False, indent=2)
+    bio = BytesIO(content.encode("utf-8"))
+    bio.name = f"selfbot_config_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    caption = (
+        "⚙️ بکاپ تنظیمات سلف‌بات (یادداشت‌ها، منشی، ارسال‌خودکار، فونت، ساعت، "
+        "مدیریت‌گروه، فیلترِ کلمات، اخطار، خلاصه‌روز، ردیاب، سوییچ‌های سراسری، آمار)\n"
+        f"برای بازیابی: روی همین فایل ریپلای کن و بنویس `{PREFIX}بازیابی`"
+    )
+    if caption_note:
+        caption = f"{caption_note}\n\n{caption}"
+    await client.send_file("me", bio, caption=caption)
 
 
 @client.on(events.NewMessage(outgoing=True, pattern=pat(["پشتیبان", "backup"])))
@@ -183,15 +344,7 @@ async def backup_handler(event):
     # ---- .پشتیبان تنظیمات : بکاپ کامل تنظیمات/وضعیتِ بات (برای بازگردانی بعد از ری‌دیپلوی) ----
     if sub in ("تنظیمات", "settings", "config"):
         await event.edit("⏳ در حال آماده‌سازی بکاپ تنظیمات...")
-        snapshot = await _gather_config_snapshot()
-        content = json.dumps(snapshot, ensure_ascii=False, indent=2)
-        bio = BytesIO(content.encode("utf-8"))
-        bio.name = f"selfbot_config_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        await client.send_file(
-            "me", bio,
-            caption="⚙️ بکاپ تنظیمات سلف‌بات (یادداشت‌ها، منشی، ارسال‌خودکار، فونت، ساعت، آمار)\n"
-                    f"برای بازیابی: روی همین فایل ریپلای کن و بنویس `{PREFIX}بازیابی`",
-        )
+        await send_settings_backup()
         return await event.edit("✅ بکاپ تنظیمات به Saved Messages ارسال شد")
 
     # ---- .پشتیبان چت‌ها : بکاپ لیست همه‌ی چت‌ها/دیالوگ‌های اکانت ----

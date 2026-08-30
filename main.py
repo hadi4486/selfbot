@@ -54,7 +54,10 @@ from bot.handlers.assistant import assistant_status_watcher
 from bot.handlers.daily_digest import daily_digest_worker
 from bot.handlers.scheduler import scheduler_worker
 from bot.handlers.message_tracker import message_tracker_cleanup_worker
+from bot.handlers.price_alert import price_alert_worker
 from bot.handlers.stats import stats_saver
+from bot.storage.stats_store import save_stats
+from bot.storage.activity_store import flush_message_activity
 
 from telethon.errors.rpcerrorlist import AuthKeyDuplicatedError
 
@@ -105,9 +108,18 @@ async def main():
     asyncio.create_task(daily_digest_worker())
     asyncio.create_task(stats_saver())
     asyncio.create_task(message_tracker_cleanup_worker())
+    asyncio.create_task(price_alert_worker())
     try:
         await client.run_until_disconnected()
     finally:
+        # آخرین شانس برای ذخیره‌ی آماری که هنوز توی بافرِ درون‌حافظه‌ست (هم
+        # STATS و هم شمارشِ پیام‌های activity) - وگرنه با هر ری‌دیپلوی روی
+        # Railway تا ۶۰ ثانیه‌ی آخر گم می‌شه.
+        try:
+            await save_stats()
+            await flush_message_activity()
+        except Exception:
+            logger.exception("خطا در ذخیره‌ی نهاییِ آمار هنگام خاموش‌شدن")
         await close_http_session()
         if bot_client is not None:
             await bot_client.disconnect()
