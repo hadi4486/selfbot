@@ -109,7 +109,7 @@ print("2) pos =", g["pos"], "| bot =", g["bot"], "| پله‌ی ۴→۲۵ و ب�
 
 # ۳) نقشه
 ev = step(".مارپله نقشه")
-assert "🐍" in ev.last and "↘" in ev.last
+assert "🐍" in ev.last and "🟫" in ev.last and "🟩" in ev.last
 print("3) نقشه ✓")
 
 # ۴) برد با رسیدن دقیق به ۱۰۰

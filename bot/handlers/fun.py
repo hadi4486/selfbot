@@ -848,6 +848,7 @@ def _snakes_cell(n: int, markers: dict) -> str:
     tail = {
         "P": "🔴", "B": "🔵", "X": "🟣",   # تو/ربات/هر دو
         "L": "🪜", "S": "🐍",                # شروعِ پله / سرِ مار
+        "Le": "🟩", "Se": "🟫",              # مقصدِ پله / دُمِ مار
         "T": "🏁",                            # خانه‌ی برد
     }.get(m, "·")
     return f"{_fa_num(n):>2}{tail}"
@@ -860,6 +861,11 @@ def _snakes_board_text(game: dict, last_line: str = "") -> str:
     🔴 تو | 🔵 ربات | 🟣 هر دو | 🪜 پله | 🐍 مار | 🏁 خانه‌ی برد | · خالی
     """
     markers = {cell: kind for cell, (kind, _) in _SN_JUMPS.items()}
+    # مقصدِ هر پرش هم روی نقشه باشه: 🟩 تهِ پله، 🟫 دُمِ مار (سر و شروع از قبل هستن)
+    for dest in list(_SNAKES_LADDERS.values()):
+        markers.setdefault(dest, "Le")
+    for dest in list(_SNAKES_SNAKES.values()):
+        markers.setdefault(dest, "Se")
     markers[_SNAKES_GOAL] = "T"  # 🏁
     p, b = game.get("pos", 0), game.get("bot")
     if b is not None and b == p and p > 0:
@@ -894,8 +900,8 @@ def _snakes_board_text(game: dict, last_line: str = "") -> str:
         players += f"\n🔵 ربات  {bar(b)} {_fa_num(b_pct)}٪  ({_fa_num(b)}/{_fa_num(_SNAKES_GOAL)})"
 
     # ---------------- کارت‌های مار/پله ----------------
-    ladders = "  ".join(f"🪜{_fa_num(a)}↗{_fa_num(d)}" for a, d in sorted(_SNAKES_LADDERS.items()))
-    snakes = "  ".join(f"🐍{_fa_num(a)}↘{_fa_num(d)}" for a, d in sorted(_SNAKES_SNAKES.items()))
+    ladders = "  ".join(f"🪜{_fa_num(a)}→🟩{_fa_num(d)}" for a, d in sorted(_SNAKES_LADDERS.items()))
+    snakes = "  ".join(f"🐍{_fa_num(a)}→🟫{_fa_num(d)}" for a, d in sorted(_SNAKES_SNAKES.items()))
 
     parts = [
         "🎲 **مارپله پرمیوم** 🎲",
@@ -903,8 +909,8 @@ def _snakes_board_text(game: dict, last_line: str = "") -> str:
         f"```\n{board}\n```",
         players,
         "",
-        f"🪜 پله‌ها: {ladders}",
-        f"🐍 مارها: {snakes}",
+        f"🟩 تهِ پله‌ها (🪜=سرِ پله): {ladders}",
+        f"🟫 دُمِ مارها (🐍=سرِ مار): {snakes}",
     ]
     if last_line:
         parts += ["", last_line]
