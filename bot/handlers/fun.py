@@ -834,15 +834,33 @@ def _snakes_apply(pos: int, roll: int) -> tuple[int, str]:
     return new, f"🎲 {roll} → خانه‌ی **{new}**"
 
 
+_FA_DIGITS = "۰۱۲۳۴۵۶۷۸۹"
+
+
+def _fa_num(n: int) -> str:
+    """تبدیل عدد به رقم‌های فارسی (برای نقشه و نوارِ پیشرفت)."""
+    return "".join(_FA_DIGITS[int(d)] for d in str(n))
+
+
+def _snakes_cell(n: int, markers: dict) -> str:
+    """یه سلولِ نقشه: شماره‌ی فارسی + نشانِ گرافیکی. ثابت‌عرض برای ستون‌های مرتب."""
+    m = markers.get(n)
+    tail = {
+        "P": "🔴", "B": "🔵", "X": "🟣",   # تو/ربات/هر دو
+        "L": "🪜", "S": "🐍",                # شروعِ پله / سرِ مار
+        "T": "🏁",                            # خانه‌ی برد
+    }.get(m, "·")
+    return f"{_fa_num(n):>2}{tail}"
+
+
 def _snakes_board_text(game: dict, last_line: str = "") -> str:
     """
-    کلِ صفحه‌ی ۱۰×۱۰ (بازگوردویِ مارپیچی مثلِ مار‌پله‌ی واقعی) در یک پیام:
-    شماره‌ی هر خانه + علامتِ S/L و موقعیتِ زنده‌ی بازی‌کننده‌ها.
-    علامت‌ها: S=سرِ مار، L=شروعِ پله، P=تو، B=ربات، X=هر دو روی یه خانه.
-    اگه بازی‌کننده روی سرِ مار/شروعِ پله وایسه، P/B جای S/L رو می‌گیره ولی
-    جدولِ کاملِ مارها و پله‌ها زیرِ صفحه همیشه هست.
+    نقشه‌ی گرافیکی premium: صفحه‌ی ۱۰×۱۰ با سلول‌های ایموجی‌دار، ردیف‌بندی
+    مارپیچی، نوارِ پیشرفت و کارت‌های جمع‌وجورِ مارها/پله‌ها.
+    🔴 تو | 🔵 ربات | 🟣 هر دو | 🪜 پله | 🐍 مار | 🏁 خانه‌ی برد | · خالی
     """
     markers = {cell: kind for cell, (kind, _) in _SN_JUMPS.items()}
+    markers[_SNAKES_GOAL] = "T"  # 🏁
     p, b = game.get("pos", 0), game.get("bot")
     if b is not None and b == p and p > 0:
         markers[p] = "X"
@@ -852,33 +870,65 @@ def _snakes_board_text(game: dict, last_line: str = "") -> str:
         if b is not None and b > 0:
             markers[b] = "B"
 
+    # ---------------- صفحه‌ی مارپیچی ۱۰×۱۰ ----------------
     rows = []
     for r in range(10, 0, -1):
         nums = list(range((r - 1) * 10 + 1, r * 10 + 1))
-        if r % 2 == 0:  # ردیف‌های زوج برعکس - مسیرِ مارپیچیِ واقعیِ مار‌پله
+        if r % 2 == 0:
             nums.reverse()
-        rows.append(" ".join(f"{n:>3}{markers.get(n, '.')}" for n in nums))
+        cells = " ".join(_snakes_cell(n, markers) for n in nums)
+        rows.append(cells)
+        if r > 1:
+            rows.append("─" * 41)
     board = "\n".join(rows)
 
-    ladders = "، ".join(f"{a}➜{d}" for a, d in sorted(_SNAKES_LADDERS.items()))
-    snakes = "، ".join(f"{a}➜{d}" for a, d in sorted(_SNAKES_SNAKES.items()))
-    players_line = f"🧑 تو: **{p}**"
+    # ---------------- نوارِ پیشرفت ----------------
+    def bar(pos: int) -> str:
+        filled = round(pos / _SNAKES_GOAL * 10)
+        return "▰" * filled + "▱" * (10 - filled)
+
+    p_bar, p_pct = bar(p), round(p / _SNAKES_GOAL * 100)
+    players = f"🔴 تو  {p_bar} {_fa_num(p_pct)}٪  ({_fa_num(p)}/{_fa_num(_SNAKES_GOAL)})"
     if b is not None:
-        players_line += f"  |  🤖 ربات: **{b}**"
+        b_pct = round(b / _SNAKES_GOAL * 100)
+        players += f"\n🔵 ربات  {bar(b)} {_fa_num(b_pct)}٪  ({_fa_num(b)}/{_fa_num(_SNAKES_GOAL)})"
+
+    # ---------------- کارت‌های مار/پله ----------------
+    ladders = "  ".join(f"🪜{_fa_num(a)}↗{_fa_num(d)}" for a, d in sorted(_SNAKES_LADDERS.items()))
+    snakes = "  ".join(f"🐍{_fa_num(a)}↘{_fa_num(d)}" for a, d in sorted(_SNAKES_SNAKES.items()))
 
     parts = [
-        f"🐍 **مار‌پله** — تا خانه‌ی {_SNAKES_GOAL}\n{players_line}",
+        "🎲 **مارپله پرمیوم** 🎲",
+        "",
         f"```\n{board}\n```",
+        players,
+        "",
+        f"🪜 پله‌ها: {ladders}",
+        f"🐍 مارها: {snakes}",
     ]
     if last_line:
-        parts.append(last_line)
-    parts.append(
-        f"🪜 پله‌ها: {ladders}\n"
-        f"🐍 مارها: {snakes}\n"
-        f"علامت‌ها: `S` مار | `L` پله | `P` تو | `B` ربات | `X` هر دو"
-    )
-    parts.append(f"🎲 تاس بنداز: `{PREFIX}مار‌پله` | لغو: `{PREFIX}مار‌پله لغو`")
+        parts += ["", last_line]
+    parts += [
+        "",
+        f"🎯 تاس بنداز: `{PREFIX}مارپله`  |  نقشه: `{PREFIX}مارپله نقشه`  |  لغو: `{PREFIX}مارپله لغو`",
+    ]
     return "\n".join(parts)
+
+
+async def _snakes_update(game, chat_id, text: str, fallback_event=None):
+    """
+    پیامِ زنده: همیشه همون پیامِ صفحه رو آپدیت می‌کنه. اگه پیام قبلی حذف شده
+    باشه، دوباره یه پیامِ جدید می‌فرسته و id جدید ذخیره می‌شه.
+    """
+    mid = game.get("msg_id")
+    if mid:
+        try:
+            return await client.edit_message(chat_id, mid, text)
+        except Exception:
+            pass  # پیام حذف شده/پیدا نشد — پایین دوباره می‌سازیم
+    msg = await client.send_message(chat_id, text)
+    game["msg_id"] = getattr(msg, "id", None)
+    return msg
 
 
 @client.on(events.NewMessage(outgoing=True, pattern=pat(["مار‌پله", "مارپله", "مار پله", "snakes"])))
@@ -893,7 +943,14 @@ async def snakes_handler(event):
     chat_id = event.chat_id
 
     if norm in ("لغو", "cancel", "stop"):
-        if SNAKES_GAMES.pop(chat_id, None) is not None:
+        game = SNAKES_GAMES.pop(chat_id, None)
+        if game is not None:
+            mid = game.get("msg_id")  # پیامِ زنده هم پاک بشه
+            if mid:
+                try:
+                    await client.delete_messages(chat_id, mid)
+                except Exception:
+                    pass
             return await event.edit("🚫 بازیِ مار‌پله لغو شد")
         return await event.edit("بازی‌ای در حال اجرا نیست")
 
@@ -902,21 +959,30 @@ async def snakes_handler(event):
     if norm in ("نقشه", "وضعیت", "board", "صفحه"):
         if not game:
             return await event.edit(f"بازی‌ای در جریان نیست؛ `{PREFIX}مار‌پله شروع`")
-        return await event.edit(_snakes_board_text(game))
+        if not game.get("msg_id"):  # بازیِ قدیمی بدون پیامِ زنده — پیامِ جدید بساز
+            board = await event.edit(_snakes_board_text(game))
+            game["msg_id"] = getattr(board, "id", None)
+            return board
+        return await _snakes_update(game, chat_id, _snakes_board_text(game))
 
     if norm in ("شروع", "start", "شروعربات", "ربات", "bot", "دونفره", "شروعدونفره", "با‌ربات", "باربات", "شروع با‌ربات", "شروع باربات", "شروعبا‌ربات", "شروعباربات"):
         vs_bot = norm not in ("شروع", "start")
         if len(SNAKES_GAMES) >= _MAX_SNAKES_GAMES:
             for k in list(SNAKES_GAMES.keys())[:_MAX_SNAKES_GAMES // 2]:
                 SNAKES_GAMES.pop(k, None)
-        game = {"pos": 0, "bot": 0 if vs_bot else None, "vs_bot": vs_bot}
+        game = {"pos": 0, "bot": 0 if vs_bot else None, "vs_bot": vs_bot, "msg_id": None}
         SNAKES_GAMES[chat_id] = game
         mode_line = "🤖 **حالت: تو در برابرِ ربات**" if vs_bot else "🧑 **حالتِ تک‌نفره**"
         rules = (
             f"برای برد باید دقیقاً روی {_SNAKES_GOAL} بیفتی؛ اگه بیشتر شدی همون‌جا می‌مونی.\n"
             + ("اگه روی خانه‌ی حریف بیفتی، می‌فرستتش سرِ خونه!\n" if vs_bot else "")
         )
-        return await event.edit(_snakes_board_text(game, f"🎮 بازیِ جدید شروع شد! {mode_line}\n{rules}"))
+        board = await event.edit(
+            _snakes_board_text(game, f"🎮 بازیِ جدید شروع شد! {mode_line}\n{rules}")
+        )
+        # پیامِ زنده: از این به بعد همون پیام با هر حرکت آپدیت می‌شه
+        game["msg_id"] = getattr(board, "id", None)
+        return board
 
     if not norm and game is None:
         return await event.edit(
@@ -929,22 +995,28 @@ async def snakes_handler(event):
 
     # ---------------------------------------------- نوبتِ بازی‌کننده (تاس) ---
     value = None
+    dice_msg = None
     for attempt in range(5):
         try:
-            _, value = await _roll_real_dice(chat_id)
+            dice_msg, value = await _roll_real_dice(chat_id)
         except errors.FloodWaitError as e:
             await asyncio.sleep(min(e.seconds, 60))
             continue
         except Exception:
             _record_error()
-            return await event.edit("❌ خطا در انداختنِ تاس؛ دوباره امتحان کن")
+            return await _snakes_update(game, chat_id, "❌ خطا در انداختنِ تاس؛ دوباره امتحان کن", event)
         if isinstance(value, int) and 1 <= value <= 6:
             break
         await asyncio.sleep(1)  # media تاس هنوز کامل نشده؛ دوباره بخون
+    try:  # پیامِ تاس اضافیه — چت تمیز بمونه
+        if dice_msg:
+            await dice_msg.delete()
+    except Exception:
+        pass
 
     if not (isinstance(value, int) and 1 <= value <= 6):
         _record_error()
-        return await event.edit("❌ تاس جواب نداد؛ دوباره بزن")
+        return await _snakes_update(game, chat_id, "❌ تاس جواب نداد؛ دوباره بزن", event)
 
     notes = []
     game["pos"], p_line = _snakes_apply(game["pos"], value)
@@ -957,9 +1029,11 @@ async def snakes_handler(event):
 
     if game["pos"] >= _SNAKES_GOAL:
         del SNAKES_GAMES[chat_id]
-        return await event.edit(
+        return await _snakes_update(
+            game, chat_id,
             _snakes_board_text({"pos": _SNAKES_GOAL, "bot": game.get("bot"), "vs_bot": game["vs_bot"]},
-                               "\n".join(notes) + "\n\n🎉 **بردی!**")
+                               "\n".join(notes) + "\n\n🎉 **بردی!**"),
+            event,
         )
 
     # ------------------------------------------------- نوبتِ ربات (خودکار) ---
@@ -973,9 +1047,9 @@ async def snakes_handler(event):
         if game["bot"] >= _SNAKES_GOAL:
             final = {"pos": game["pos"], "bot": _SNAKES_GOAL, "vs_bot": True}
             del SNAKES_GAMES[chat_id]
-            return await event.edit(_snakes_board_text(final, "\n".join(notes) + "\n\n🤖 **ربات برد! دوباره؟** `مار‌پله شروع ربات`"))
+            return await _snakes_update(game, chat_id, _snakes_board_text(final, "\n".join(notes) + "\n\n🤖 **ربات برد! دوباره؟** `مار‌پله شروع ربات`"), event)
 
-    await event.edit(_snakes_board_text(game, "\n".join(notes)))
+    await _snakes_update(game, chat_id, _snakes_board_text(game, "\n".join(notes)), event)
 
 
 # ------------------------------------------------------- ۴) حافظه‌ی اعداد ---
