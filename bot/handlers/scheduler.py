@@ -38,8 +38,14 @@ _FULL_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})[ T](\d{1,2}):(\d{2})$")
 
 
 def _local_now() -> dt.datetime:
-    """همون الگوی clock.py: زمانِ محلی به‌صورت naive datetime."""
-    return dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=TIMEZONE_OFFSET)
+    """
+    همون الگوی clock.py: زمانِ محلی به‌صورت naive datetime.
+    (قبلاً aware UTC برمی‌گشت با ttlinfo=UTC ولی مقدارِ شیفت‌شده - که موقعِ
+    مقایسه با datetime های naive تولیدشده از strptime خطای
+    «can't compare offset-naive and offset-aware» می‌داد و `.زمان‌بند
+    2026-...` رو می‌شکست.)
+    """
+    return dt.datetime.now(dt.timezone.utc).replace(tzinfo=None) + dt.timedelta(hours=TIMEZONE_OFFSET)
 
 
 def _to_utc_aware(local_dt: dt.datetime) -> dt.datetime:

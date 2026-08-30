@@ -14,6 +14,7 @@ group_guard_state = {
     "porn_filter_chats": set(),  # chat_id هایی که فیلترِ پورن روشنه
     "spam_filter_chats": set(),  # chat_id هایی که فیلترِ اسپم روشنه
     "profanity_filter_chats": set(),  # chat_id هایی که فیلترِ فحش روشنه
+    "media_locks": {},  # chat_id -> set of locked keys ("sticker"/"video"/...)
 }
 
 
@@ -24,6 +25,7 @@ async def init_group_guard_state() -> None:
     porn_chats = set()
     spam_chats = set()
     profanity_chats = set()
+    media_locks = {}
     for row in rows:
         if row.link_filter_enabled:
             link_chats.add(row.chat_id)
@@ -35,11 +37,19 @@ async def init_group_guard_state() -> None:
             spam_chats.add(row.chat_id)
         if row.profanity_filter_enabled:
             profanity_chats.add(row.chat_id)
+        locked = frozenset(
+            key[len("lock_"):]
+            for key in group_guard_repo.MEDIA_LOCK_KEYS
+            if getattr(row, key)
+        )
+        if locked:
+            media_locks[row.chat_id] = set(locked)
     group_guard_state["link_filter_chats"] = link_chats
     group_guard_state["welcome"] = welcome
     group_guard_state["porn_filter_chats"] = porn_chats
     group_guard_state["spam_filter_chats"] = spam_chats
     group_guard_state["profanity_filter_chats"] = profanity_chats
+    group_guard_state["media_locks"] = media_locks
 
 
 async def set_link_filter(chat_id: int, enabled: bool) -> None:
@@ -88,6 +98,53 @@ async def set_profanity_filter(chat_id: int, enabled: bool) -> None:
 
 def is_profanity_filter_enabled(chat_id: int) -> bool:
     return chat_id in group_guard_state["profanity_filter_chats"]
+
+
+# ---------------------------------------------------------------- قفل رسانه ---
+# اسمِ فارسی/انگلیسیِ هر نوع -> کلیدِ داخلی (بدونِ پیشوندِ lock_)
+MEDIA_LOCK_TYPES = {
+    "استیکر": "sticker", "sticker": "sticker",
+    "ویدیو": "video", "ویدئو": "video", "فیلم": "video", "video": "video",
+    "صدا": "audio", "آهنگ": "audio", "موزیک": "audio", "audio": "audio", "music": "audio",
+    "وویس": "voice", "ویس": "voice", "voice": "voice",
+    "گیف": "gif", "gif": "gif",
+    "عکس": "photo", "photo": "photo",
+    "بازی": "game", "game": "game",
+    "نظرسنجی": "poll", "poll": "poll",
+}
+
+
+def _locked_set(chat_id: int) -> set:
+    return group_guard_state["media_locks"].setdefault(chat_id, set())
+
+
+async def set_media_lock(chat_id: int, media_type: str, enabled: bool) -> None:
+    if media_type not in MEDIA_LOCK_TYPES.values():
+        raise ValueError(f"نوعِ نامعتبر: {media_type}")
+    locked = _locked_set(chat_id)
+    if enabled:
+        locked.add(media_type)
+    else:
+        locked.discard(media_type)
+    await group_guard_repo.set_media_lock(chat_id, f"lock_{media_type}", enabled)
+
+
+async def set_all_media_locks(chat_id: int, enabled: bool) -> None:
+    if enabled:
+        group_guard_state["media_locks"][chat_id] = set(MEDIA_LOCK_TYPES.values())
+    else:
+        group_guard_state["media_locks"][chat_id] = set()
+    await group_guard_repo.set_all_media_locks(chat_id, enabled)
+
+
+def is_media_locked(chat_id: int, media_type: str) -> bool:
+    locked = group_guard_state["media_locks"].get(chat_id)
+    return bool(locked and media_type in locked)
+
+
+def get_media_locks(chat_id: int) -> set:
+    """یه کپی از لیستِ قفل‌های فعلیِ گروه (برای نمایش وضعیت)."""
+    return set(group_guard_state["media_locks"].get(chat_id) or ())
 
 
 async def set_welcome_enabled(chat_id: int, enabled: bool) -> None:

@@ -229,6 +229,16 @@ class GroupGuardSettings(Base):
     porn_filter_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     spam_filter_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     profanity_filter_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # قفل‌های رسانه‌ای (`.قفل‌رسانه`): حذف خودکار این نوع رسانه‌ها از اعضای
+    # غیرادمینِ گروه - دقیقاً هم‌الگوی فیلترلینک/اسپم.
+    lock_sticker: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    lock_video: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    lock_audio: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    lock_voice: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    lock_gif: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    lock_photo: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    lock_game: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    lock_poll: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     updated_at: Mapped[dt.datetime] = mapped_column(
         server_default=func.now(), onupdate=func.now(), nullable=False
     )
@@ -269,6 +279,38 @@ class DailyDigestChat(Base):
     chat_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     title: Mapped[str] = mapped_column(Text, nullable=False)
     added_at: Mapped[dt.datetime] = mapped_column(server_default=func.now(), nullable=False)
+
+
+# ---------------------------------------------------- Recurring Jobs ---
+class RecurringJob(Base):
+    """
+    یادآوری/ارسالِ تکرارشونده (`.یادآوری تکراری`): هر رکورد یه برنامه‌ی تکراریه
+    که ورکرِ پس‌زمینه هر دقیقه چک می‌کنه و وقتِ اجراش (next_run_at به‌وقتِ UTC)
+    گذشته باشه پیامش رو می‌فرسته و next_run_at رو برای دورِ بعد جلو می‌بره.
+
+    interval_seconds برای حالتِ فاصله‌ای (هر N ساعت/دقیقه/روز) به‌کار می‌ره و
+    daily_time برای حالتِ «هر روز سرِ ساعت» (HH:MM به‌وقتِ محلی، طبقِ
+    TIMEZONE_OFFSET) - همیشه دقیقاً یکی از این دو الگو مقدار معتبر داره.
+    """
+
+    __tablename__ = "recurring_jobs"
+    __table_args__ = (
+        CheckConstraint("kind IN ('reminder', 'schedule')", name="ck_recurring_jobs_kind"),
+        Index("ix_recurring_jobs_next_run", "next_run_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, default="reminder")
+    interval_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    daily_hour: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    daily_minute: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    next_run_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
 
 
 # --------------------------------------------------------- Scheduler ---

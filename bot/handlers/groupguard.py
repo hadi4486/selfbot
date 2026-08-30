@@ -54,6 +54,11 @@ from ..storage.group_guard_store import (
     set_spam_filter,
     set_welcome_enabled,
     set_welcome_text,
+    MEDIA_LOCK_TYPES,
+    get_media_locks,
+    is_media_locked,
+    set_all_media_locks,
+    set_media_lock,
 )
 from ..storage.word_filter_store import (
     add_word_filter,
@@ -440,6 +445,123 @@ async def pornfilter_watcher(event):
     except Exception:
         _record_error()
         logger.exception("خطا در حذفِ عکسِ فیلترشده")
+
+
+# ----------------------------------------------------------- قفل رسانه ---
+_MEDIA_TYPE_LABEL = {
+    "sticker": "استیکر", "video": "ویدیو", "audio": "صدا/آهنگ", "voice": "وویس",
+    "gif": "گیف", "photo": "عکس", "game": "بازی", "poll": "نظرسنجی",
+}
+
+
+def _message_media_type(message) -> str | None:
+    """نوعِ رسانه‌ایِ پیام رو به کلیدِ داخلیِ قفل‌ها برمی‌گردونه (یا None برای متن)."""
+    media = message.media
+    if media is None:
+        return None
+    name = type(media).__name__
+    if name == "MessageMediaDocument":
+        doc = getattr(media, "document", None)
+        attrs = getattr(doc, "attributes", []) if doc else []
+        attr_names = {type(a).__name__ for a in attrs}
+        if "DocumentAttributeSticker" in attr_names:
+            return "sticker"
+        if "DocumentAttributeAnimated" in attr_names:
+            return "gif"
+        if "DocumentAttributeVideo" in attr_names:
+            # وویس/round هم VideoNote نیستن؛ voice attribute دارن
+            if "DocumentAttributeAudio" in attr_names:
+                return "voice" if getattr(next(a for a in attrs if type(a).__name__ == "DocumentAttributeAudio"), "voice", False) else "audio"
+            return "video"
+        if "DocumentAttributeAudio" in attr_names:
+            audio_attr = next(a for a in attrs if type(a).__name__ == "DocumentAttributeAudio")
+            return "voice" if getattr(audio_attr, "voice", False) else "audio"
+        return None
+    if name == "MessageMediaPhoto":
+        return "photo"
+    if name == "MessageMediaGame":
+        return "game"
+    if name == "MessageMediaPoll":
+        return "poll"
+    if name == "MessageMediaDice":
+        return "game"
+    return None
+
+
+@client.on(events.NewMessage(outgoing=True, pattern=pat(["قفل‌رسانه", "medialock"])))
+async def media_lock_cmd_handler(event):
+    if not event.is_group:
+        return await event.edit("این دستور فقط توی گروه‌ها کار می‌کنه")
+    raw = (event.pattern_match.group(1) or "").strip()
+    parts = raw.split()
+    chat_id = event.chat_id
+
+    if not parts:
+        locked = get_media_locks(chat_id)
+        if not locked:
+            text = "🔓 هیچ رسانه‌ای در این گروه قفل نیست."
+        else:
+            text = "🔒 **رسانه‌های قفل‌شده‌ی این گروه:**\n" + "\n".join(
+                f"• {_MEDIA_TYPE_LABEL.get(t, t)}" for t in sorted(locked)
+            )
+        return await event.edit(
+            text
+            + f"\n\n`{PREFIX}قفل‌رسانه <استیکر/ویدیو/صدا/وویس/گیف/عکس/بازی/نظرسنجی> روشن/خاموش`"
+            + f"\n`{PREFIX}قفل‌رسانه همه روشن/خاموش` — قفل/بازکردنِ همه"
+        )
+
+    sub = parts[0].lower()
+    state_word = parts[1].lower() if len(parts) > 1 else ""
+
+    if state_word in ("روشن", "on", "lock", "قفل"):
+        enabled = True
+    elif state_word in ("خاموش", "off", "unlock", "باز"):
+        enabled = False
+    else:
+        return await event.edit(
+            f"مثال: `{PREFIX}قفل‌رسانه استیکر روشن` یا `{PREFIX}قفل‌رسانه همه خاموش`\n"
+            "انواع: استیکر، ویدیو، صدا، وویس، گیف، عکس، بازی، نظرسنجی"
+        )
+
+    if sub in ("همه", "all", "*"):
+        await set_all_media_locks(chat_id, enabled)
+        return await event.edit(
+            "🔒 همه‌ی رسانه‌ها برای اعضای غیرادمین قفل شد" if enabled
+            else "🔓 همه‌ی قفل‌های رسانه‌ای این گروه برداشته شد"
+        )
+
+    media_type = MEDIA_LOCK_TYPES.get(sub) or MEDIA_LOCK_TYPES.get(parts[0])
+    if media_type is None:
+        return await event.edit(
+            f"❌ نوعِ نامعتبر: «{parts[0]}»\n"
+            "انواع: استیکر، ویدیو، صدا، وویس، گیف، عکس، بازی، نظرسنجی"
+        )
+    await set_media_lock(chat_id, media_type, enabled)
+    await event.edit(
+        f"🔒 {_MEDIA_TYPE_LABEL[media_type]} برای اعضای غیرادمین قفل شد" if enabled
+        else f"🔓 {_MEDIA_TYPE_LABEL[media_type]} برای اعضا آزاد شد"
+    )
+
+
+@client.on(events.NewMessage(incoming=True))
+async def media_lock_watcher(event):
+    """حذفِ خودکارِ رسانه‌های قفل‌شده از اعضای غیرادمین (هم‌الگوی فیلترلینک)."""
+    if not event.is_group:
+        return
+    chat_id = event.chat_id
+    if not get_media_locks(chat_id):
+        return  # هیچ قفلی فعال نیست - سریع‌ترین مسیر خروج
+    media_type = _message_media_type(event.message)
+    if media_type is None or not is_media_locked(chat_id, media_type):
+        return
+    if await _is_admin_or_creator(event):
+        return
+    try:
+        await event.delete()
+        await increment_deleted(chat_id, 1)
+    except Exception:
+        _record_error()
+        logger.exception("خطا در حذفِ رسانه‌ی قفل‌شده (chat_id=%s)", chat_id)
 
 
 # --------------------------------------------------------------- خوش‌آمد ---

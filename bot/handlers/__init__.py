@@ -47,4 +47,6 @@ from . import (
     plugins_cmd,
     message_tracker,
     price_alert,
+    recurring,
+    extras,
 )
