@@ -641,7 +641,7 @@ _WORDCHAIN_STARTERS = [
 _PERSIAN_LETTERS = "آابپتثجچحخدذرزژسشصضطظعغفقکگلمنوهی"
 
 
-@client.on(events.NewMessage(outgoing=True, pattern=pat(["کلمه‌ساز", "wordchain", "زنجیره"])))
+@client.on(events.NewMessage(outgoing=True, pattern=pat(["کلمه‌ساز", "کلمه ساز", "کلمهساز", "wordchain", "زنجیره"])))
 async def wordchain_handler(event):
     """
     زنجیره‌کلمات فارسی: با یه کلمه شروع می‌کنیم؛ هر کلمه‌ی جدید باید با
@@ -723,7 +723,7 @@ _WORDGUESS_WORDS = [
 _WORDGUESS_MAX_WRONG = 6
 
 
-@client.on(events.NewMessage(outgoing=True, pattern=pat(["حدس‌کلمه", "واژه", "hangman"])))
+@client.on(events.NewMessage(outgoing=True, pattern=pat(["حدس‌کلمه", "حدس کلمه", "حدسکلمه", "واژه", "hangman"])))
 async def wordguess_handler(event):
     """
     حدسِ کلمه (مثل hangman): یه کلمه‌ی پنهان با جای‌خالی‌ها نشون داده می‌شه؛
@@ -811,7 +811,7 @@ _SNAKES_SNAKES = {17: 4, 21: 9, 29: 12}
 _SNAKES_LADDERS = {3: 11, 6: 14, 15: 24, 20: 27}
 
 
-@client.on(events.NewMessage(outgoing=True, pattern=pat(["مار‌پله", "snakes"], arg=False)))
+@client.on(events.NewMessage(outgoing=True, pattern=pat(["مار‌پله", "مارپله", "مار پله", "snakes"])))
 async def snakes_handler(event):
     """
     مار‌پله‌ی تک‌نفره با تاسِ واقعیِ تلگرام (InputMediaDice): هر بار تاس
@@ -841,15 +841,25 @@ async def snakes_handler(event):
             )
         return await event.edit(f"اول شروع کن: `{PREFIX}مار‌پله شروع`")
 
-    # تاسِ واقعیِ تلگرام - از همون helperِ تestedِ `.تاس` (_roll_dice) استفاده می‌کنیم
-    try:
-        _, value = await _roll_real_dice(chat_id)
-    except errors.FloodWaitError as e:
-        await asyncio.sleep(min(e.seconds, 60))
-        return await event.edit("⏳ محدودیتِ موقتِ تلگرام؛ چند لحظه دیگه دوباره تاس بنداز")
-    except Exception:
+    # تاسِ واقعیِ تلگرام - مثلِ `.تاس` چندبار تلاش می‌کنیم چون media گاهی
+    # دیر پر می‌شه و value=None برمی‌گرده (بدونِ retry این‌جا کرش می‌کرد)
+    value = None
+    for attempt in range(5):
+        try:
+            _, value = await _roll_real_dice(chat_id)
+        except errors.FloodWaitError as e:
+            await asyncio.sleep(min(e.seconds, 60))
+            continue
+        except Exception:
+            _record_error()
+            return await event.edit("❌ خطا در انداختنِ تاس؛ دوباره امتحان کن")
+        if isinstance(value, int) and 1 <= value <= 6:
+            break
+        await asyncio.sleep(1)
+
+    if not (isinstance(value, int) and 1 <= value <= 6):
         _record_error()
-        return await event.edit("❌ خطا در انداختنِ تاس")
+        return await event.edit("❌ تاس جواب نداد؛ دوباره بزن")
 
     pos = game["pos"] + value
     extra = ""
@@ -879,7 +889,7 @@ MEMORY_GAMES = {}  # chat_id -> {"digits": str, "level": int, "stage": int}
 _MAX_MEMORY_GAMES = 50
 
 
-@client.on(events.NewMessage(outgoing=True, pattern=pat(["حافظه", "memory"], arg=False)))
+@client.on(events.NewMessage(outgoing=True, pattern=pat(["حافظه", "memory"])))
 async def memory_handler(event):
     """
     بازیِ حافظه‌ی اعداد: یه عدد کوتاه نشون داده می‌شه و بعد پاک می‌شه؛ تو باید
