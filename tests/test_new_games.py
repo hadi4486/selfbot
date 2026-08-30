@@ -41,7 +41,7 @@ class TestWordGuess:
 
 class TestSnakesLadders:
     def test_goal(self):
-        assert _SNAKES_GOAL == 30
+        assert _SNAKES_GOAL == 100
 
     def test_snake_destination_lower(self):
         for src, dst in _SNAKES_SNAKES.items():
