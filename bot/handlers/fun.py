@@ -621,3 +621,314 @@ async def hafez_fal_handler(event):
         body += f"\n\n💬 **تفسیر:**\n{row.interpretation}"
     await event.edit(body)
 
+
+
+# ---------------------------------------------------------------------------
+# بازی‌های جدید: کلمه‌ساز (زنجیره)، حدسِ کلمه، مار‌پله، حافظه‌ی اعداد
+# ---------------------------------------------------------------------------
+
+# ----------------------------------------------------- ۱) کلمه‌ساز (زنجیره) ---
+WORDCHAIN_GAMES = {}  # chat_id -> {"last_word": str, "used": set[str], "count": int}
+_MAX_WORDCHAIN_GAMES = 50
+
+# اسم‌های متداولِ فارسی برای شروعِ راحتِ بازی (همه با حروفِ جدا)
+_WORDCHAIN_STARTERS = [
+    "تبریز", "کاشان", "نیشابور", "همدان", "سوادکوه", "رشت", "گرگان", "اراک",
+    "لیمو", "هویج", "انار", "سیب", "خرما", "زردآلو", "گلابی", "آلبالو",
+    "کتاب", "تاق", "کوهنورد", "دریا", "آسمان", "باران", "گلدان", "مدرسه",
+]
+
+_PERSIAN_LETTERS = "آابپتثجچحخدذرزژسشصضطظعغفقکگلمنوهی"
+
+
+@client.on(events.NewMessage(outgoing=True, pattern=pat(["کلمه‌ساز", "wordchain", "زنجیره"])))
+async def wordchain_handler(event):
+    """
+    زنجیره‌کلمات فارسی: با یه کلمه شروع می‌کنیم؛ هر کلمه‌ی جدید باید با
+    حرفِ آخرِ کلمه‌ی قبلی شروع بشه. این بازی خودِ کاربر با بات (یا دو نفره
+    توی گروه) بازی می‌کنه.
+    """
+    arg = (event.pattern_match.group(1) or "").strip()
+    chat_id = event.chat_id
+
+    if not arg or arg.lower() in ("شروع", "start"):
+        if len(WORDCHAIN_GAMES) >= _MAX_WORDCHAIN_GAMES:
+            oldest = list(WORDCHAIN_GAMES.keys())[:_MAX_WORDCHAIN_GAMES // 2]
+            for k in oldest:
+                WORDCHAIN_GAMES.pop(k, None)
+        starter = random.choice(_WORDCHAIN_STARTERS)
+        WORDCHAIN_GAMES[chat_id] = {"last_word": starter, "used": {starter}, "count": 1}
+        return await event.edit(
+            f"🔗 **کلمه‌ساز شروع شد!**\n"
+            f"کلمه‌ی اول: **{starter}**\n\n"
+            f"حالا یه کلمه بگو که با «{starter[-1]}» شروع بشه:\n"
+            f"`{PREFIX}کلمه‌ساز <کلمه>` — لغو: `{PREFIX}کلمه‌ساز لغو`"
+        )
+
+    if arg.lower() in ("لغو", "cancel", "stop"):
+        if WORDCHAIN_GAMES.pop(chat_id, None) is not None:
+            return await event.edit("🚫 کلمه‌ساز لغو شد")
+        return await event.edit("بازی‌ای در حال اجرا نیست")
+
+    game = WORDCHAIN_GAMES.get(chat_id)
+    if not game:
+        return await event.edit(f"اول بازی رو شروع کن: `{PREFIX}کلمه‌ساز شروع`")
+
+    word = arg.strip().strip("‌")  # نیم‌فاصله‌های ابتدا/انتها رو هم بگیره
+    if not word:
+        return await event.edit("کلمه رو بنویس")
+    if word in game["used"]:
+        return await event.edit(f"♻️ «{word}» قبلاً گفته شده! یه کلمه‌ی جدید بگو")
+    if word[0] != game["last_word"][-1]:
+        return await event.edit(
+            f"❌ «{word}» باید با «{game['last_word'][-1]}» شروع بشه (حرفِ آخرِ «{game['last_word']}»)"
+        )
+    game["used"].add(word)
+    game["count"] += 1
+    last_letter = word[-1]
+    # نوبتِ بات: یه حرف تصادفی برای ادامه نمی‌تونیم «بلد باشیم»؛ پس بازی‌کننده
+    # ادامه می‌ده و بات فقط داوره - شمارنده رو نشون بده
+    game["last_word"] = word
+    await event.edit(
+        f"✅ «{word}» قبوله! (تعداد: {game['count']})\n"
+        f"حالا با «{last_letter}» ادامه بده"
+    )
+
+
+# ------------------------------------------------------ ۲) حدسِ کلمه (واژه) ---
+WORDGUESS_GAMES = {}  # chat_id -> {"word": str, "hint": str, "revealed": list[str], "wrong": int}
+_MAX_WORDGUESS_GAMES = 50
+
+_WORDGUESS_WORDS = [
+    ("کتابخونه", "جایی که کتاب توش زیاده"),
+    ("دوچرخه", "وسیله‌ی دوردَوَزه با دو تا چرخ"),
+    ("آفتاب‌گردون", "گلی که همیشه رو به خورشیده"),
+    ("زمستان", "سردترین فصل سال"),
+    ("تلویزیون", "جعبه‌ای که فیلم توش پخش می‌شه"),
+    ("قهوه", "نوشیدنیِ تلخِ بیدارکننده"),
+    ("ماشین‌لباسشویی", "لباس‌ها رو خودکار می‌شوره"),
+    ("فوتبال", "ورزشِ محبوب با توپ و دروازه"),
+    ("زنبور عسل", "عسل می‌سازه و نیش هم داره"),
+    ("قطار", "روی ریل حرکت می‌کنه"),
+    ("آشپزخونه", "جایی که غذا پخت می‌شه"),
+    ("چتر", "توی بارون بازش می‌کنی"),
+    ("قهوه‌ای", "رنگِ شکلات"),
+    ("شتر", "کشتیِ بیابون"),
+    ("ماهی", "توی آب زندگی می‌کنه"),
+    ("هدیه", "چیزی که با کادوپیچ می‌دی"),
+    ("دستگاهِ چاپ", "متن رو روی کاغذ تکرار می‌کنه"),
+    ("بارگاه", "جای آرامگاهِ پادشاهان"),
+]
+
+_WORDGUESS_MAX_WRONG = 6
+
+
+@client.on(events.NewMessage(outgoing=True, pattern=pat(["حدس‌کلمه", "واژه", "hangman"])))
+async def wordguess_handler(event):
+    """
+    حدسِ کلمه (مثل hangman): یه کلمه‌ی پنهان با جای‌خالی‌ها نشون داده می‌شه؛
+    حرف حدس بزن یا کل کلمه رو یکجا بگو. تا ۶ اشتباه مجازِ.
+    """
+    arg = (event.pattern_match.group(1) or "").strip()
+    chat_id = event.chat_id
+
+    if not arg or arg.lower() in ("شروع", "start"):
+        if len(WORDGUESS_GAMES) >= _MAX_WORDGUESS_GAMES:
+            oldest = list(WORDGUESS_GAMES.keys())[:_MAX_WORDGUESS_GAMES // 2]
+            for k in oldest:
+                WORDGUESS_GAMES.pop(k, None)
+        word, hint = random.choice(_WORDGUESS_WORDS)
+        WORDGUESS_GAMES[chat_id] = {
+            "word": word,
+            "hint": hint,
+            "revealed": ["_"] * len(word),
+            "wrong": 0,
+        }
+        masked = " ".join("＿" for _ in word)
+        return await event.edit(
+            f"🔤 **حدسِ کلمه**\n"
+            f"راهنما: {hint}\n"
+            f"کلمه: `{masked}` ({len(word)} حرف)\n\n"
+            f"حرف حدس بزن: `{PREFIX}حدس‌کلمه ب` یا کلِ کلمه: `{PREFIX}حدس‌کلمه <کلمه>`\n"
+            f"اشتباهِ مجاز: {_WORDGUESS_MAX_WRONG} — لغو: `{PREFIX}حدس‌کلمه لغو`"
+        )
+
+    if arg.lower() in ("لغو", "cancel", "stop"):
+        game = WORDGUESS_GAMES.pop(chat_id, None)
+        if game:
+            return await event.edit(f"🚫 لغو شد؛ کلمه «{game['word']}» بود")
+        return await event.edit("بازی‌ای در حال اجرا نیست")
+
+    game = WORDGUESS_GAMES.get(chat_id)
+    if not game:
+        return await event.edit(f"اول شروع کن: `{PREFIX}حدس‌کلمه شروع`")
+
+    guess = arg.strip()
+    word = game["word"]
+    revealed = game["revealed"]
+
+    if len(guess) == 1:
+        # حدسِ یه حرف
+        if guess in revealed:
+            return await event.edit(f"«{guess}» رو قبلاً زدی")
+        if guess in word:
+            for i, ch in enumerate(word):
+                if ch == guess:
+                    revealed[i] = guess
+        else:
+            game["wrong"] += 1
+    elif guess == word:
+        # بردِ مستقیم با حدسِ کل کلمه
+        del WORDGUESS_GAMES[chat_id]
+        return await event.edit(f"🎉 آفرین! کلمه **{word}** بود (بدونِ اشتباه)")
+    else:
+        game["wrong"] += 1
+
+    if "_" not in revealed:
+        del WORDGUESS_GAMES[chat_id]
+        return await event.edit(f"🎉 بردی! کلمه **{word}** بود (اشتباه: {game['wrong']})")
+    if game["wrong"] >= _WORDGUESS_MAX_WRONG:
+        del WORDGUESS_GAMES[chat_id]
+        return await event.edit(
+            f"💀 باختی! ({_WORDGUESS_MAX_WRONG} اشتباه)\nکلمه **{word}** بود"
+        )
+
+    remaining = _WORDGUESS_MAX_WRONG - game["wrong"]
+    await event.edit(
+        f"🔤 `{' '.join(revealed)}`\n"
+        f"اشتباه‌ها: {game['wrong']}/{_WORDGUESS_MAX_WRONG} (باقی‌مونده: {remaining})"
+    )
+
+
+# ------------------------------------------------------------ ۳) مار‌پله ----
+SNAKES_GAMES = {}  # chat_id -> {"pos": int} - موقعیتِ مهره‌ی بازی‌کننده
+_MAX_SNAKES_GAMES = 50
+_SNAKES_GOAL = 30
+
+# مارها (سر → دُم): موقعیت‌های افتادن
+_SNAKES_SNAKES = {17: 4, 21: 9, 29: 12}
+# پله‌ها (پایین → بالا): موقعیت‌های جلوفتن
+_SNAKES_LADDERS = {3: 11, 6: 14, 15: 24, 20: 27}
+
+
+@client.on(events.NewMessage(outgoing=True, pattern=pat(["مار‌پله", "snakes"], arg=False)))
+async def snakes_handler(event):
+    """
+    مار‌پله‌ی تک‌نفره با تاسِ واقعیِ تلگرام (InputMediaDice): هر بار تاس
+    می‌ندازی، مهره جلو می‌ره؛ مار یعنی سقوط، پله یعنی جهش. اولین نفری که به ۳۰ برسه برنده‌.
+    """
+    arg = (event.pattern_match.group(1) or "").strip()
+    chat_id = event.chat_id
+
+    if arg.lower() in ("لغو", "cancel", "stop"):
+        if SNAKES_GAMES.pop(chat_id, None) is not None:
+            return await event.edit("🚫 بازیِ مار‌پله لغو شد")
+        return await event.edit("بازی‌ای در حال اجرا نیست")
+
+    game = SNAKES_GAMES.get(chat_id)
+    if game is None:
+        if arg.lower() in ("", "شروع", "start"):
+            if len(SNAKES_GAMES) >= _MAX_SNAKES_GAMES:
+                oldest = list(SNAKES_GAMES.keys())[:_MAX_SNAKES_GAMES // 2]
+                for k in oldest:
+                    SNAKES_GAMES.pop(k, None)
+            SNAKES_GAMES[chat_id] = {"pos": 0}
+            return await event.edit(
+                f"🐍 **مار‌پله شروع شد!** از خانه‌ی ۰ تا {_SNAKES_GOAL}\n"
+                f"🪜 پله‌ها: 3→11، 6→14، 15→24، 20→27\n"
+                f"🐍 مارها: 17→4، 21→9، 29→12\n\n"
+                f"هر بار بزن: `{PREFIX}مار‌پله` تا تاس بندازی"
+            )
+        return await event.edit(f"اول شروع کن: `{PREFIX}مار‌پله شروع`")
+
+    # تاسِ واقعیِ تلگرام - از همون helperِ تestedِ `.تاس` (_roll_dice) استفاده می‌کنیم
+    try:
+        _, value = await _roll_real_dice(chat_id)
+    except errors.FloodWaitError as e:
+        await asyncio.sleep(min(e.seconds, 60))
+        return await event.edit("⏳ محدودیتِ موقتِ تلگرام؛ چند لحظه دیگه دوباره تاس بنداز")
+    except Exception:
+        _record_error()
+        return await event.edit("❌ خطا در انداختنِ تاس")
+
+    pos = game["pos"] + value
+    extra = ""
+    if pos in _SNAKES_SNAKES:
+        new_pos = _SNAKES_SNAKES[pos]
+        extra = f"\n🐍 اوه نه! مار! از {pos} افتادی به **{new_pos}**"
+        pos = new_pos
+    elif pos in _SNAKES_LADDERS:
+        new_pos = _SNAKES_LADDERS[pos]
+        extra = f"\n🪜 پله! از {pos} پریدی به **{new_pos}**"
+        pos = new_pos
+
+    if pos >= _SNAKES_GOAL:
+        del SNAKES_GAMES[chat_id]
+        return await event.edit(
+            f"🎉 **بردی!** با تاسِ {value} به {_SNAKES_GOAL} رسیدی!{extra}"
+        )
+    game["pos"] = pos
+    await event.edit(
+        f"🎲 تاس: **{value}** → خانه‌ی **{pos}**{extra}\n"
+        f"تا {_SNAKES_GOAL} چقدر مونده: {_SNAKES_GOAL - pos}"
+    )
+
+
+# ------------------------------------------------------- ۴) حافظه‌ی اعداد ---
+MEMORY_GAMES = {}  # chat_id -> {"digits": str, "level": int, "stage": int}
+_MAX_MEMORY_GAMES = 50
+
+
+@client.on(events.NewMessage(outgoing=True, pattern=pat(["حافظه", "memory"], arg=False)))
+async def memory_handler(event):
+    """
+    بازیِ حافظه‌ی اعداد: یه عدد کوتاه نشون داده می‌شه و بعد پاک می‌شه؛ تو باید
+    تکرارش کنی. هر مرحله یه رقم بیشتر. با `حافظه توقف` ذخیره نمی‌شه ولی لیستِ
+    رکوردِ این چت نگه داشته می‌شه.
+    """
+    arg = (event.pattern_match.group(1) or "").strip()
+    chat_id = event.chat_id
+
+    if arg.lower() in ("لغو", "cancel", "stop"):
+        game = MEMORY_GAMES.pop(chat_id, None)
+        if game:
+            return await event.edit(f"🚫 لغو شد؛ رکوردت این مرحله بود: **{game['level']} رقم**")
+        return await event.edit("بازی‌ای در حال اجرا نیست")
+
+    if arg.lstrip("-").isdigit():
+        game = MEMORY_GAMES.get(chat_id)
+        if not game:
+            return await event.edit(f"اول شروع کن: `{PREFIX}حافظه شروع`")
+        if arg == game["digits"]:
+            level = game["level"] + 1
+            game["level"] = level
+            game["digits"] = "".join(random.choice("0123456789") for _ in range(level))
+            await event.edit(f"✅ درست بود! مرحله‌ی بعد ({level} رقم)...")
+            await asyncio.sleep(2.5)
+            msg = await event.respond(f"🧠 به‌خاطر بسپار:\n||{game['digits']}||")
+            await asyncio.sleep(max(2.0, level * 0.8))
+            return await msg.edit(
+                f"⏱ وقتِ پاسخ! عددِ {level} رقمی رو بزن: `{PREFIX}حافظه <عدد>`"
+            )
+        wrong = game["digits"]
+        level = game["level"]
+        del MEMORY_GAMES[chat_id]
+        return await event.edit(
+            f"❌ اشتباه بود! عددِ درست **{wrong}** بود\n"
+            f"🏆 رکوردت: **{level} رقم** — دوباره: `{PREFIX}حافظه شروع`"
+        )
+
+    if arg.lower() in ("", "شروع", "start"):
+        if len(MEMORY_GAMES) >= _MAX_MEMORY_GAMES:
+            oldest = list(MEMORY_GAMES.keys())[:_MAX_MEMORY_GAMES // 2]
+            for k in oldest:
+                MEMORY_GAMES.pop(k, None)
+        digits = "".join(random.choice("0123456789") for _ in range(3))
+        MEMORY_GAMES[chat_id] = {"digits": digits, "level": 3, "stage": 1}
+        msg = await event.edit(f"🧠 **بازیِ حافظه شروع شد!**\nبه‌خاطر بسپار:\n||{digits}||")
+        await asyncio.sleep(3.0)
+        return await msg.edit(f"⏱ عددِ ۳ رقمی رو بزن: `{PREFIX}حافظه <عدد>`")
+
+    return await event.edit(
+        f"مثال: `{PREFIX}حافظه شروع` برای شروع، `{PREFIX}حافظه 12345` برای پاسخ، `{PREFIX}حافظه لغو`"
+    )

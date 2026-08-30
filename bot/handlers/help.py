@@ -69,6 +69,14 @@ def build_help_text_part1():
 {PREFIX}کوییز — یه سوالِ عمومیِ چهارگزینه‌ای (از Open Trivia DB)
 {PREFIX}کوییز <۱ تا ۴> — جواب‌دادن به سوالِ فعال
 {PREFIX}فال — یه فالِ حافظِ تصادفی با تفسیر
+{PREFIX}کلمه‌ساز شروع — بازیِ زنجیره‌کلمات (هر کلمه با حرفِ آخرِ قبلی شروع شه)
+{PREFIX}کلمه‌ساز <کلمه> — ادامه‌دادنِ بازی | {PREFIX}کلمه‌ساز لغو
+{PREFIX}حدس‌کلمه شروع — حدسِ کلمه‌ی پنهان (۶ اشتباهِ مجاز، حرف‌به‌حرف یا کلِ کلمه)
+{PREFIX}حدس‌کلمه <حرف/کلمه> — حدس‌زدن | {PREFIX}حدس‌کلمه لغو
+{PREFIX}مار‌پله شروع — بازیِ مار‌پله با تاسِ واقعیِ تلگرام (تا خانه‌ی ۳۰)
+{PREFIX}مار‌پله — تاس انداختن | {PREFIX}مار‌پله لغو
+{PREFIX}حافظه شروع — بازیِ حافظه‌ی اعداد (هر مرحله یه رقم بیشتر)
+{PREFIX}حافظه <عدد> — پاسخ‌دادن | {PREFIX}حافظه لغو
 
 
 **فونت پیام**
@@ -325,12 +333,47 @@ def build_help_text_part4():
 """
 
 
+def _split_for_telegram(text: str, limit: int = 3900) -> list[str]:
+    """
+    یه متنِ بلند رو به chunkهای زیرِ limit می‌شکنه (ترجیحاً روی مرزِ خط) -
+    چون تلگرام سقف ۴۰۹۶ کاراکتر برای هر پیام داره و ردشدن ازش یعنی
+    MessageTooLong و fail بی‌صدای دستور. limit عمداً ۳۹۰۰ گرفته شده تا
+    حتی اگه بعداً بخش‌های جدیدی اضافه شن، همیشه جا باشه.
+    """
+    chunks: list[str] = []
+    current = ""
+    for line in text.split("\n"):
+        # خطِ به‌شدت بلند (بدون مرزِ خط) رو هم می‌شکنیم
+        while len(line) > limit:
+            chunks.append(line[:limit])
+            line = line[limit:]
+        if current and len(current) + len(line) + 1 > limit:
+            chunks.append(current)
+            current = line
+        else:
+            current = f"{current}\n{line}" if current else line
+    if current:
+        chunks.append(current)
+    return chunks
+
+
 @client.on(events.NewMessage(outgoing=True, pattern=pat(["راهنما", "help"], arg=False)))
 async def help_handler(event):
-    # تلگرام سقف ۴۰۹۶ کاراکتر برای هر پیام داره؛ متن راهنما ازش رد می‌شد
-    # (باعث می‌شد event.edit خطای MessageTooLong بده و دستور بی‌صدا fail بشه)،
-    # برای همین به چهار پیام تقسیم شده.
-    await event.edit(build_help_text_part1())
-    await event.respond(build_help_text_part2())
-    await event.respond(build_help_text_part3())
-    await event.respond(build_help_text_part4())
+    """
+    راهنما به ۴ بخشِ منطقی تقسیم می‌شه و هر بخش *قبل از ارسال* دوباره با
+    _split_for_telegram چک می‌شه؛ پس هرچقدر هم دستورهای جدید اضافه شن،
+    هیچ‌وقت از سقف ۴۰۹۶ِ تلگرام رد نمی‌شه و به‌جای fail، خودکار
+    به چند پیام شکسته می‌شه.
+    """
+    raw_parts = [
+        build_help_text_part1(),
+        build_help_text_part2(),
+        build_help_text_part3(),
+        build_help_text_part4(),
+    ]
+    chunks = [c for part in raw_parts for c in _split_for_telegram(part)]
+    if not chunks:
+        return
+    await event.edit(chunks[0])
+    for chunk in chunks[1:]:
+        await event.respond(chunk)
