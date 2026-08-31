@@ -355,3 +355,67 @@ class PriceAlert(Base):
     created_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+# ---------------------------------------------------------- Escape Room ---
+class EscapeSession(Base):
+    """
+    وضعیتِ بازیِ در جریانِ اتاق فرار (`.فرار`). هر (chat_id, user_id) دقیقاً
+    یک رکورد دارد — جداسازیِ نشست‌ها با کلیدِ مرکب. کلِ state بازی به‌صورتِ
+    JSON در ستونِ state ذخیره می‌شود (موتورِ بازی یک dict قابلِ JSON است)
+    تا با هر restart از PostgreSQL برگردد.
+    """
+
+    __tablename__ = "escape_sessions"
+    __table_args__ = (
+        Index("ix_escape_sessions_user", "user_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    state: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class EscapeScore(Base):
+    """نتیجه‌ی هر بازیِ تمام‌شده (برنده یا بازنده) برای leaderboard و آمار."""
+
+    __tablename__ = "escape_scores"
+    __table_args__ = (
+        Index("ix_escape_scores_user_score", "user_id", "score"),
+        Index("ix_escape_scores_won", "won"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    scenario: Mapped[str] = mapped_column(String(32), nullable=False)
+    score: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    solved_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    elapsed_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    won: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class EscapeDaily(Base):
+    """چالشِ روزانه: هر کاربر در هر روز فقط یک تلاش (`.فرار روزانه`)."""
+
+    __tablename__ = "escape_daily"
+    __table_args__ = (
+        UniqueConstraint("chat_id", "user_id", "day", name="uq_escape_daily_day"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    day: Mapped[str] = mapped_column(String(10), nullable=False)  # YYYY-MM-DD
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    reward_xp: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )

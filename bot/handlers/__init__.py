@@ -49,4 +49,5 @@ from . import (
     price_alert,
     recurring,
     extras,
+    escape,
 )
