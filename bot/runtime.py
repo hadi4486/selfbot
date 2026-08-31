@@ -11,7 +11,22 @@ from . import config
 
 if config.SESSION_STRING:
     from telethon.sessions import StringSession
-    client = TelegramClient(StringSession(config.SESSION_STRING), config.API_ID, config.API_HASH)
+    client = TelegramClient(
+        StringSession(config.SESSION_STRING),
+        config.API_ID,
+        config.API_HASH,
+        device_model="selfbot-py",     # قابل‌شناسایی در «سشن‌های فعال» تلگرام
+        system_version="linux",
+        app_version="1.0",
+        # --- پایداری اتصال ---
+        catch_up=True,           # آپدیت‌های حینِ قطعی بعد از وصل‌شدن تحویل داده بشن
+        auto_reconnect=True,     # (پیش‌فرض هم True است؛ صریح نوشتیم)
+        retry_delay=2,           # بینِ تلاش‌های reconnect فقط ۲ ثانیه (پیش‌فرض ۱)
+        request_retries=5,       # هر درخواست تا ۵ بار دوباره امتحان می‌شه
+        connection_retries=10,   # اتصالِ اولیه/مجدد تا ۱۰ بار (پیش‌فرض ۵)
+        flood_sleep_threshold=120,  # FloodWait تا ۱۲۰ ثانیه خودکار صبر می‌کنه (پیش‌فرض ۶۰)
+        use_ipv6=False,          # روی Railway فقط IPv4 مطمئن‌تره
+    )
 else:
     client = TelegramClient("selfbot_session", config.API_ID, config.API_HASH)
 

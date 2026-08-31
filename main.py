@@ -72,6 +72,72 @@ from bot import handlers  # noqa: F401
 logger = logging.getLogger("selfbot.main")
 
 
+async def connection_watchdog():
+    """
+    نگهبانِ اتصال: هر ۳۰ ثانیه سلامتِ اتصالِ کلاینت اکانت رو چک می‌کنه.
+
+    چرا لازمه؟ Telethon auto_reconnect داره، ولی اگه قطعی طولانی بشه (یا
+    ری‌کانکت خیلی پشتِ سر هم fail بشه)، ممکنه پروسه بدونِ اتصال و بی‌هیچ
+    خطایی زنده بمونه — از بیرون یعنی «سلف‌بات غیرفعال شد». این تسک:
+      ۱) اگه قطع بود: اول یه ping سبک می‌زنه و دوباره تلاش می‌کنه؛
+      ۲) اگه چند دورِ پشتِ هم وصل نشد: پروسه رو با exit(1) می‌بنده تا
+         Railway خودش ری‌استارتش کنه (بهترین راهِ بازیابیِ قطعی)؛
+      ۳) وضعیت رو برای `.سلامت` ثبت می‌کنه.
+    """
+    from bot import runtime
+    from telethon import errors as _errors
+
+    fail_streak = 0
+    while True:
+        try:
+            connected = client.is_connected()
+            if connected:
+                # ping واقعی تا اتصالِ نیمه‌مرده هم لو بره
+                try:
+                    await asyncio.wait_for(client.get_me(), timeout=20)
+                    fail_streak = 0
+                    health.update_worker_status("connection_watchdog", "ok")
+                except (asyncio.TimeoutError, ConnectionError, OSError) as e:
+                    connected = False
+                    logger.warning("ping به تلگرام timeout/قطع شد: %r", e)
+                except _errors.FloodWaitError as e:
+                    # FloodWait یعنی اتصال سالمه؛ فقط صبر
+                    logger.warning("watchdog: FloodWait %s ثانیه - صبر", e.seconds)
+                    health.update_worker_status("connection_watchdog", "ok")
+                    await asyncio.sleep(min(e.seconds, 120))
+                    continue
+            if not connected:
+                fail_streak += 1
+                logger.warning(
+                    "اتصال قطع است (دورِ متوالی %s) - تلاش برای reconnect...", fail_streak
+                )
+                health.update_worker_status(
+                    "connection_watchdog", "degraded",
+                    error=f"disconnected streak={fail_streak}",
+                )
+                try:
+                    await client.connect()
+                    if await client.is_user_authorized():
+                        me = await client.get_me()
+                        logger.info("reconnect موفق - اکانت %s دوباره وصل شد", me.first_name)
+                        fail_streak = 0
+                        health.update_worker_status("connection_watchdog", "ok")
+                    else:
+                        logger.error("reconnect شد ولی سشن دیگر authorize نیست!")
+                except Exception:
+                    logger.exception("reconnect fail شد")
+                if fail_streak >= 6:  # ~۶ تلاشِ ناموفق پشتِ هم
+                    logger.critical(
+                        "اتصال بعد از %s دورِ متوالی برنگشت - پروسه برای ری‌استارتِ "
+                        "خودکارِ Railway بسته می‌شه", fail_streak,
+                    )
+                    import os as _os
+                    _os._exit(1)
+        except Exception:
+            logger.exception("خطای غیرمنتظره در watchdog اتصال - دورِ بعد ادامه")
+        await asyncio.sleep(30)
+
+
 async def main():
     await get_http_session()  # ساخت ClientSession مشترک قبل از شروع کار
 
@@ -92,7 +158,11 @@ async def main():
 
     me = await client.get_me()
     set_self_id(me.id)
-    logger.info("سلف‌بات با اکانت %s روشن شد", me.first_name)
+    logger.info(
+        "سلف‌بات با اکانت %s روشن شد (سشن: %s)",
+        me.first_name,
+        "StringSession از env" if config.SESSION_STRING else "فایل selfbot_session",
+    )
 
     # بات کمکیِ پنل (اختیاری) - چون تلگرام دکمه‌های شیشه‌ای رو فقط برای
     # پیام‌های ارسالی از طرف یه بات واقعی نمایش می‌ده، دستور «.پنل» پنل
@@ -117,6 +187,7 @@ async def main():
     asyncio.create_task(message_tracker_cleanup_worker())
     asyncio.create_task(price_alert_worker())
     asyncio.create_task(recurring_worker())
+    asyncio.create_task(connection_watchdog())
     try:
         await client.run_until_disconnected()
     finally:
@@ -136,11 +207,32 @@ async def main():
 
 if __name__ == "__main__":
     import signal
-    _shutdown_event = asyncio.Event()
 
     def _signal_handler(sig, frame):
-        logger.info("سیگنال %s دریافت شد در حال بهتر بستن بشه در حال خروج...", sig)
-        _shutdown_event.set()
+        """
+        خاموشیِ تمیز روی SIGTERM/SIGINT (Railway موقعِ هر ری‌دیپلوی/ری‌استارت
+        SIGTERM می‌فرسته). ⚠️ این بخش حیاتیِ جلوگیری از ابطالِ سشن است:
+        اگه موقعِ خاموشی disconnect نکنیم، اتصالِ سشن از IP قدیمی چند ثانیه/
+        دقیقه‌ای زنده می‌مونه؛ دیپلویِ جدید از IP جدید با همون auth key وصل
+        می‌شه و تلگرام «هم‌زمانِ دو IP» رو می‌بینه → AuthKeyDuplicated →
+        سشن برای همیشه باطل می‌شه (دقیقاً همون «SESSION_STRING غیرفعال شد»).
+        disconnectِ تمیز یعنی تلگرام قبل از بالا آمدنِ دپلویِ جدید سشنِ قدیمی
+        رو بسته دیده.
+        """
+        logger.info("سیگنال %s دریافت شد - در حال بستنِ تمیز اتصال‌ها...", sig)
+        try:
+            # هر دو کلاینت باید فوری قطع بشن؛ future-less و مستقیم
+            client.loop.run_until_complete(client.disconnect())
+            from bot import runtime as _rt
+            if _rt.bot_client is not None and _rt.bot_client.is_connected():
+                _rt.bot_client.loop.run_until_complete(_rt.bot_client.disconnect())
+            # ۲ ثانیه فرصت تا تلگرام قطع‌شدنِ سشنِ قدیمی را ثبت کند و
+            # دیپلویِ جدید (با همان سشن) بلافاصله «هم‌زمانِ دو IP» حساب نشود.
+            import time as _t
+            _t.sleep(2)
+        except Exception:
+            logger.exception("خطا در قطعِ تمیز روی سیگنال - به هر حال خارج می‌شویم")
+        raise SystemExit(0)
 
     # ثبت signal handler برای خاموشی تمیز
     signal.signal(signal.SIGTERM, _signal_handler)
