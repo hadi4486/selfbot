@@ -141,11 +141,29 @@ async def _is_admin_or_creator(event) -> bool:
         perms = await event.get_permissions()
         is_admin = bool(getattr(perms, "is_admin", False) or getattr(perms, "is_creator", False))
     except Exception:
-        is_admin = True  # اگه واقعاً نتونستیم چک کنیم، برای احتیاط پیام رو حذف نمی‌کنیم
-        logger.warning(
-            "چک ادمین‌بودن برای (chat_id=%s, user_id=%s) fail شد - fail-open (ادمین فرض شد)",
-            chat_id, user_id, exc_info=True,
-        )
+        # fallback دوم: GetParticipantRequest خام (بدون نیاز به resolveِ سشنِ تک‌کاربر)
+        # چون event خودش Peerِ فرستنده رو داره؛ خیلی از خطاهای get_permissions اینجا پیش نمی‌آن.
+        is_admin = None
+        try:
+            from telethon.tl.functions.channels import GetParticipantRequest
+            from telethon.tl.types import (
+                ChannelParticipantAdmin,
+                ChannelParticipantCreator,
+            )
+            participant = await client(
+                GetParticipantRequest(await event.get_input_chat(), await event.get_input_sender())
+            )
+            p = participant.participant
+            is_admin = isinstance(p, (ChannelParticipantAdmin, ChannelParticipantCreator))
+        except Exception:
+            pass
+        if is_admin is None:
+            # اگه واقعاً نتونستیم چک کنیم، برای احتیاط پیام رو حذف نمی‌کنیم (fail-open)
+            is_admin = True
+            logger.warning(
+                "چک ادمین‌بودن برای (chat_id=%s, user_id=%s) هر دو روش fail شد - fail-open (ادمین فرض شد)",
+                chat_id, user_id, exc_info=True,
+            )
     _admin_cache[key] = (is_admin, now)
     return is_admin
 
@@ -440,11 +458,43 @@ async def pornfilter_watcher(event):
     if not await _is_nsfw_image(raw):
         return
 
+    # حذف با دو روش: اول event.delete؛ اگه شکست خورد client.delete_messages
+    deleted = False
     try:
         await event.delete()
+        deleted = True
     except Exception:
         _record_error()
-        logger.exception("خطا در حذفِ عکسِ فیلترشده")
+        logger.warning("event.delete برای عکسِ NSFW شکست خورد - تلاش با delete_messages", exc_info=True)
+    if not deleted:
+        try:
+            await client.delete_messages(event.chat_id, event.message.id)
+            deleted = True
+        except Exception:
+            _record_error()
+            logger.exception("حذفِ عکسِ فیلترشده (هر دو روش) شکست خورد (chat_id=%s)", event.chat_id)
+    if deleted:
+        try:
+            await increment_deleted(event.chat_id, 1)
+        except Exception:
+            pass
+        return
+
+    # حذف شکست خورد (معمولاً: سلف ادمین این گروه نیست یا محدودیتِ تلگرام) -
+    # بی‌صدا نگذاریم: گزارش به Saved Messages تا کاربر بدونه چرا پاک نشد
+    try:
+        sender = await event.get_sender()
+        name = getattr(sender, "first_name", "") or getattr(sender, "title", "") or "?"
+        await client.send_message(
+            "me",
+            "🔞 فیلترِ پورن: عکسِ NSFW پیدا شد ولی حذف نشد!\n"
+            f"گروه: {event.chat_title or event.chat_id}\n"
+            f"فرستنده: {name} ({sender_id})\n"
+            "احتمالاً این اکانت در این گروه ادمین نیست (حذفِ پیامِ دیگران نیاز به ادمین داره).",
+        )
+    except Exception:
+        _record_error()
+        logger.exception("خطا در گزارشِ عدمِ حذفِ عکسِ NSFW")
 
 
 # ----------------------------------------------------------- قفل رسانه ---
