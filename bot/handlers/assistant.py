@@ -100,6 +100,7 @@ _ACTIVITY_KIND_FA = {
 # اگر تلگرام بگه آنلاین → منشی خاموش؛ به‌محضِ آفلاین‌شدن → روشن. بدونِ هیچ
 # تکیه‌ای بر پیام‌ها.
 _last_profile_status_online: bool | None = None   # None = هنوز نمی‌دونیم
+_last_assistant_reply_at: datetime | None = None  # آخرین باری که منشی خودش پیام فرستاد
 _last_status_poll_ok = datetime.min.replace(tzinfo=timezone.utc)
 _status_poll_failures = 0
 _status_poll_flood_until = 0.0
@@ -721,6 +722,8 @@ async def assistant_autoreply(event):
         # یه تسکِ جدا زودتر از برگشتنِ این await پردازش بشه - اگه *بعد* از
         # reply() مارک می‌کردیم، ممکن بود اون یکی به‌غلط «خودِ کاربر همین الان
         # فعالیت کرد» حساب بشه و بلافاصله منشی رو خاموش کنه.
+        global _last_assistant_reply_at
+        _last_assistant_reply_at = datetime.now(timezone.utc)
         _auto_reply_in_flight[event.chat_id] = _auto_reply_in_flight.get(event.chat_id, 0) + 1
         try:
             await event.reply(reply_text, formatting_entities=entities)
@@ -1071,16 +1074,32 @@ async def assistant_status_poller():
                 ok = await _poll_profile_status()
                 if ok:
                     online = _last_profile_status_online
-                    desired = not online  # آنلاین → خاموش؛ آفلاین → روشن
-                    if desired != assistant_state["enabled"]:
-                        if desired:
-                            assistant_state["replied"] = set()
-                        assistant_state["enabled"] = desired
-                        logger.info(
-                            "منشی %s شد - وضعیتِ پروفایل: %s",
-                            "روشن" if desired else "خاموش",
-                            "آنلاین" if online else "آفلاین",
+                    # ⚠️ آنلاینِ جعلی: وقتی منشی خودش پیام می‌فرسته، تلگرام
+                    # اکانت را چند ده ثانیه «آنلاین» نشون می‌ده (فعالیتِ
+                    # سشنِ خودِ بات). اگر داخلِ grace بعدِ آخرین پاسخِ منشی
+                    # باشیم، به «آنلاین» اعتماد نمی‌کنیم — وگرنه منشی با
+                    # پیامِ خودش خاموش می‌شد و چرخه‌ی روشن/خاموش می‌افتاد.
+                    in_reply_grace = (
+                        _last_assistant_reply_at is not None
+                        and (datetime.now(timezone.utc) - _last_assistant_reply_at).total_seconds()
+                        < config.ASSISTANT_REPLY_STATUS_GRACE
+                    )
+                    if online and in_reply_grace:
+                        health.update_worker_status(
+                            "assistant_status_poll", "grace"
                         )
+                    else:
+                        desired = not online  # آنلاین → خاموش؛ آفلاین → روشن
+                        if desired != assistant_state["enabled"]:
+                            if desired:
+                                assistant_state["replied"] = set()
+                            assistant_state["enabled"] = desired
+                            logger.info(
+                                "منشی %s شد - وضعیتِ پروفایل: %s%s",
+                                "روشن" if desired else "خاموش",
+                                "آنلاین" if online else "آفلاین",
+                                " (داخلِ graceِ پاسخِ خودِ منشی)" if in_reply_grace else "",
+                            )
                 health.update_worker_status(
                     "assistant_status_poll", "ok" if ok else "degraded"
                 )

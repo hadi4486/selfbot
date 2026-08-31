@@ -55,6 +55,40 @@ case("سشن خاموش + سشن تازه", True, 9999, 30, 30)
 case("سشن خاموش + local تازه", False, 50, 30, 30)
 config.ASSISTANT_SESSION_ONLINE_THRESHOLD = 540
 
+# ---- grace بعدِ پاسخِ منشی ----
+a._last_assistant_reply_at = datetime.now(timezone.utc) - timedelta(seconds=10)  # تازه جواب داده
+a._last_profile_status_online = True   # تلگرام می‌گه آنلاین (جعلی، از خودِ reply)
+a.assistant_state["enabled"] = True
+online = a._last_profile_status_online
+in_grace = (a._last_assistant_reply_at is not None and
+            (datetime.now(timezone.utc) - a._last_assistant_reply_at).total_seconds() < config.ASSISTANT_REPLY_STATUS_GRACE)
+if not (online and in_grace):
+    a.assistant_state["enabled"] = not online
+assert a.assistant_state["enabled"] == True, "منشی نباید با آنلاینِ جعلیِ reply خاموش شود"
+print("✓ آنلاینِ جعلی داخلِ grace → منشی روشن می‌ماند")
+
+a._last_assistant_reply_at = datetime.now(timezone.utc) - timedelta(seconds=120)  # grace گذشته
+online = a._last_profile_status_online
+in_grace = (a._last_assistant_reply_at is not None and
+            (datetime.now(timezone.utc) - a._last_assistant_reply_at).total_seconds() < config.ASSISTANT_REPLY_STATUS_GRACE)
+if not (online and in_grace):
+    a.assistant_state["enabled"] = not online
+assert a.assistant_state["enabled"] == False, "بعد از grace، آنلاینِ واقعی باید منشی را خاموش کند"
+print("✓ بعد از grace، آنلاینِ واقعی → منشی خاموش")
+
+# آفلاین داخلِ grace → روشن (آفلاین هیچ‌وقت جعلی نیست)
+a._last_assistant_reply_at = datetime.now(timezone.utc) - timedelta(seconds=10)
+a._last_profile_status_online = False
+online = a._last_profile_status_online
+in_grace = (a._last_assistant_reply_at is not None and
+            (datetime.now(timezone.utc) - a._last_assistant_reply_at).total_seconds() < config.ASSISTANT_REPLY_STATUS_GRACE)
+if not (online and in_grace):
+    if not online and a.assistant_state["enabled"] is False:
+        a.assistant_state["replied"] = set()
+    a.assistant_state["enabled"] = not online
+assert a.assistant_state["enabled"] == True
+print("✓ آفلاین داخلِ grace → منشی روشن (آفلاین جعلی نداریم)")
+
 print("ALL OK" if ok else "FAILED")
 sys.exit(0 if ok else 1)
 
