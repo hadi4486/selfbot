@@ -275,29 +275,44 @@ async def _is_nsfw_image(raw: bytes) -> bool:
     پاک‌کردنِ اشتباهیِ عکسِ سالمِ یه کاربر، عکس رو دست‌نخورده رد می‌کنیم و فقط
     warning لاگ می‌کنیم (قابلِ دیدن مستقیم توی چت هم با `.فیلترپورن تست`).
     """
-    try:
-        raw_response = await _classify_image(raw, return_raw=True)
-    except (ai.AIDisabledError, ai.AIRequestError) as e:
-        logger.warning("فیلترِ پورن: سرویسِ AI خطا داد - fail-open. جزئیات: %s", e)
-        return False
-    choice = {}
-    if isinstance(raw_response, dict):
-        choices = raw_response.get("choices") or [{}]
-        choice = choices[0] if choices else {}
-    answer = ((choice.get("message") or {}).get("content") or "").strip()
-    normalized = answer.upper()
-    if "NSFW" not in normalized and "SAFE" not in normalized:
-        # نه خطا داد، نه یکی از دو کلمه‌ی موردِ انتظار رو برگردوند (پاسخِ
-        # خالی/مبهم) - fail-open: با AI_MODELِ فعلی که درست NSFW/SAFE تشخیص
-        # می‌ده، این حالت دیگه نشونه‌ی قابلِ اعتمادِ محتوای صریح نیست.
+    last_answer, last_finish = "", None
+    for attempt in range(config.GROUP_PORN_FILTER_RETRIES):
+        try:
+            raw_response = await _classify_image(raw, return_raw=True)
+        except (ai.AIDisabledError, ai.AIRequestError) as e:
+            logger.warning("فیلترِ پورن: سرویسِ AI خطا داد - fail-open. جزئیات: %s", e)
+            return False
+        choice = {}
+        if isinstance(raw_response, dict):
+            choices = raw_response.get("choices") or [{}]
+            choice = choices[0] if choices else {}
+        answer = ((choice.get("message") or {}).get("content") or "").strip()
+        normalized = answer.upper()
+        last_answer, last_finish = answer, choice.get("finish_reason")
+
+        if "NSFW" in normalized:
+            return True   # تشخیصِ صریح - حذف
+        if "SAFE" in normalized:
+            return False  # تشخیصِ صریح - سالم
+
+        # پاسخِ خالی/مبهم: مدلِ بعضی‌وقت‌ها (گلیچِ موقتِ سرویس) خالی جواب می‌ده
+        # و تلاشِ بعدی درست تشخیص می‌ده - قبل از fail-open، دوباره امتحان می‌کنیم.
         logger.warning(
-            "فیلترِ پورن: پاسخِ مدل نه NSFW بود نه SAFE (احتمالاً خالی) - "
-            "fail-open (کاری با عکس نداریم). پاسخِ خام: %r finish_reason: %r",
-            answer,
-            choice.get("finish_reason"),
+            "فیلترِ پورن: تلاشِ %s/%s - پاسخِ مدل نه NSFW بود نه SAFE (احتمالاً خالی). "
+            "پاسخِ خام: %r finish_reason: %r",
+            attempt + 1, config.GROUP_PORN_FILTER_RETRIES, answer, choice.get("finish_reason"),
         )
-        return False
-    return "NSFW" in normalized
+        if attempt + 1 < config.GROUP_PORN_FILTER_RETRIES:
+            await asyncio.sleep(1.0)  # یه مکثِ کوتاه بینِ تلاش‌ها
+
+    # همه‌ی تلاش‌ها پاسخِ مبهم داد - fail-open: کاری با عکس نداریم (ریسکِ
+    # حذفِ اشتباهیِ عکسِ سالم از حذف‌نشدنِ احتمالیِ یه عکسِ صریح مهم‌تره)
+    logger.warning(
+        "فیلترِ پورن: بعد از %s تلاش پاسخِ قابلِ استفاده نبود - fail-open. "
+        "آخرین پاسخ: %r finish_reason: %r",
+        config.GROUP_PORN_FILTER_RETRIES, last_answer, last_finish,
+    )
+    return False
 
 
 @client.on(events.NewMessage(outgoing=True, pattern=pat(["فیلترپورن", "pornfilter"])))

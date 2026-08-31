@@ -127,6 +127,9 @@ TTS_VOICE = os.getenv("TTS_VOICE", "fa-IR-FaridNeural")
 GROUP_PORN_FILTER_MAX_BYTES = int(
     os.getenv("GROUP_PORN_FILTER_MAX_BYTES", str(8 * 1024 * 1024))
 )  # عکس‌های بزرگ‌تر از این چک نمی‌شن (برای جلوگیری از دانلودهای سنگین/کند)
+# چند بار (مجموع) برای هر عکس از مدل بپرسیم اگه پاسخ خالی/مبهم بود - بعضی
+# سرویس‌ها گاهی خالی جواب می‌دهن و تلاشِ بعدی درست تشخیص می‌ده.
+GROUP_PORN_FILTER_RETRIES = int(os.getenv("GROUP_PORN_FILTER_RETRIES", "3"))
 
 # فیلترِ اسپم کاملاً محلیه (بدونِ نیاز به AI): تشخیصِ فلادِ پیام (تعداد زیاد
 # توی یه بازه‌ی کوتاه) و تکرارِ عینِ یه متن از طرفِ یک نفر.
