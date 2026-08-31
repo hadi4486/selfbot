@@ -130,7 +130,7 @@ ASSISTANT_STATUS_POLL_INTERVAL = max(
 # (پیش‌فرض ۹۰ ثانیه؛ تلگرام لیبلِ آنلاین را حدودِ ۳۰ ثانیه نگه می‌داره،
 # با حاشیه‌ی امن). اگر بعد از این مدت هنوز آنلاین بود، یعنی واقعاً خودتی.
 ASSISTANT_REPLY_STATUS_GRACE = max(
-    int(os.getenv("ASSISTANT_REPLY_STATUS_GRACE", "90")), 30
+    int(os.getenv("ASSISTANT_REPLY_STATUS_GRACE", "30")), 30
 )
 # grace (ثانیه): برای روشن‌شدنِ منشی (آفلاین‌شدنت) باید «حداقل» این مدت از
 # آخرین سیگنالِ هر دو منبع گذشته باشه — ضدِ flicker (مثلاً خوندنِ سریعِ یه
