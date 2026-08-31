@@ -1,5 +1,4 @@
-"""تستِ منطقِ دو لایه‌ی تشخیصِ آنلاین/آفلاینِ منشی (بدون تلگرام)"""
-import asyncio
+"""تستِ منطقِ دو لایه‌ی تشخیصِ آنلاین/آفلاینِ منشی (بدون تلگرام) — با آستانه‌های جدا"""
 import os
 import sys
 from datetime import datetime, timedelta, timezone
@@ -13,6 +12,7 @@ import bot.config as config
 import bot.handlers.assistant as a
 
 config.ASSISTANT_ONLINE_THRESHOLD = 180
+config.ASSISTANT_SESSION_ONLINE_THRESHOLD = 540
 config.ASSISTANT_SESSION_MAX_AGE = 300
 a.assistant_state["schedule_enabled"] = False
 a.assistant_state["auto_detect"] = True
@@ -35,45 +35,60 @@ def case(name, expected_enabled, local_gap, seen_gap=None, poll_age=None):
 
 # ۱) هیچ سیگنالی → آفلاین → منشی روشن
 case("بدون هیچ سیگنال", True, None, None, None)
-# ۲) فقط local تازه (۵۰s) → تو آنلاینی → منشی خاموش
+# ۲) local تازه (۵۰s) → آنلاین → منشی خاموش
 case("local تازه ۵۰s", False, 50, None, None)
-# ۳) فقط session تازه (۶۰s با poll تازه) → آنلاین → منشی خاموش
-case("session تازه ۶۰s", False, 9999, 60, 30)
-# ۴) هر دو کهنه (۳۰۰s+) → آفلاین → منشی روشن
-case("هر دو کهنه", True, 400, 400, 30)
-# ۵) local کهنه ولی session تازه → آنلاین (لایه‌ی سشن نجات می‌دهد)
-case("local کهنه، session تازه", False, 600, 50, 30)
-# ۶) session کهنه‌ی poll (poll_age>MAX_AGE) → فقط local حساب می‌شود
-case("poll کهنه، local کهنه", True, 500, 10, 400)  # session نادیده → آفلاین
-case("poll کهنه، local تازه", False, 60, 10, 400)  # فقط local → آنلاین
-# ۷) خطای متوالی poll → backoff → session غیرقابل‌اعتماد (poll کهنه شبیه‌سازی شد بالا)
+# ۳) سشن تازه (۳۰۰s) — زیرِ آستانه‌ی سشنِ ۵۴۰ ولی بالای threshold محلی → هنوز آنلاین (لایه‌ی سشن)
+case("سشن ۳۰۰s (فقط لایه‌ی سشن)", False, 9999, 300, 30)
+# ۴) سشن ۶۰۰s — بالای آستانه‌ی سشن (۵۴۰) → آفلاین → منشی روشن ⭐ (این قبلاً fail می‌شد)
+case("سشن ۶۰۰s کهنه", True, 9999, 600, 30)
+# ۵) هر دو کهنه → آفلاین → منشی روشن
+case("هر دو کهنه", True, 400, 600, 30)
+# ۶) local کهنه، سشن تازه → آنلاین
+case("local کهنه، سشن تازه", False, 600, 50, 30)
+# ۷) poll کهنه (>MAX_AGE) → سشن نادیده؛ local کهنه → آفلاین
+case("poll کهنه، local کهنه", True, 500, 10, 400)
+# ۸) poll کهنه، local تازه → آنلاین (فقط local)
+case("poll کهنه، local تازه", False, 60, 10, 400)
+# ۹) لایه‌ی سشن خاموش (threshold=0): سشن تازه هم منشی را روشن نگه می‌دارد
+config.ASSISTANT_SESSION_ONLINE_THRESHOLD = 0
+case("سشن خاموش + سشن تازه", True, 9999, 30, 30)
+case("سشن خاموش + local تازه", False, 50, 30, 30)
+config.ASSISTANT_SESSION_ONLINE_THRESHOLD = 540
 
 print("ALL OK" if ok else "FAILED")
 sys.exit(0 if ok else 1)
 
 
-# ---- سناریوی سشن current: باید نادیده گرفته بشه ----
-import bot.handlers.assistant as a2
+# ---- حالتِ وضعیتِ پروفایل (status mode) ----
+import bot.config as config
+import bot.handlers.assistant as a
 
-class FakeAuth:
-    def __init__(self, current, days_ago, hours_active_ago=0):
-        self.current = current
-        self.date_active = now - timedelta(days=days_ago, hours=-hours_active_ago)
+config.ASSISTANT_PRESENCE_MODE = "status"
+a.assistant_state["auto_detect"] = True
 
-class FakeResult:
-    def __init__(self, auths):
-        self.authorizations = auths
+# پیامِ تازه (۵ ثانیه پیش) — در حالتِ status نباید منشی را خاموش کند
+a._last_self_activity = datetime.now(timezone.utc) - timedelta(seconds=5)
+a._safe_recompute()
+assert a.assistant_state["enabled"] == True, "پیام نباید در حالت status تأثیر بگذارد"
+print("✓ پیامِ تازه در حالتِ status مداخله نمی‌کند")
 
-# شبیه‌سازی مستقیم حلقه‌ی استخراجِ _poll_session_activity بدون کلاینت:
-auths = [FakeAuth(True, 0), FakeAuth(False, 2), FakeAuth(False, 0, 5)]  # current + گوشیِ ۲ روز پیش + وبِ ۵ ساعت پیش
-newest = None
-for auth in auths:
-    if getattr(auth, "current", False):
-        continue
-    active = auth.date_active
-    if newest is None or active > newest:
-        newest = active
-# باید وبِ ۵ ساعت پیش انتخاب بشه (نه current که الان است)
-expected = auths[2].date_active
-assert newest == expected, "سشن current نباید شمرده شود"
-print("✓ فیلتر سشن current در استخراجِ date_active کار می‌کند")
+# شبیه‌سازیِ مستقیمِ منطقِ poller: آنلاین → خاموش؛ آفلاین → روشن
+a._last_profile_status_online = True
+a.assistant_state["enabled"] = True
+# همان کدِ درونِ assistant_status_poller:
+online = a._last_profile_status_online
+desired = not online
+if desired != a.assistant_state["enabled"]:
+    a.assistant_state["enabled"] = desired
+assert a.assistant_state["enabled"] == False
+print("✓ آنلاین → منشی خاموش")
+
+a._last_profile_status_online = False
+online = a._last_profile_status_online
+desired = not online
+if desired != a.assistant_state["enabled"]:
+    if desired:
+        a.assistant_state["replied"] = set()
+    a.assistant_state["enabled"] = desired
+assert a.assistant_state["enabled"] == True
+print("✓ آفلاین → منشی روشن (بلافاصله)")

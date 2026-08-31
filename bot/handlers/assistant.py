@@ -95,6 +95,15 @@ _ACTIVITY_KIND_FA = {
 # واقعاً کاری کرده. بیشینه‌ی این مقادیر روی همه‌ی سشن‌ها یعنی «آخرین فعالیتِ
 # انسانیِ اکانت از هر دستگاهی»، حتی اگه این پروسه اصلاً چیزی ندیده باشه.
 # datetime.min یعنی هنوز هیچ poll موفقی نداشتیم.
+# --- لایه‌ی وضعیتِ واقعی (آنلاین/آفلاینِ پروفایل) ---
+# وضعیتی که تلگرام توی اپ نشون می‌ده: «آنلاین» یا «آخرین بازدید X دقیقه پیش».
+# اگر تلگرام بگه آنلاین → منشی خاموش؛ به‌محضِ آفلاین‌شدن → روشن. بدونِ هیچ
+# تکیه‌ای بر پیام‌ها.
+_last_profile_status_online: bool | None = None   # None = هنوز نمی‌دونیم
+_last_status_poll_ok = datetime.min.replace(tzinfo=timezone.utc)
+_status_poll_failures = 0
+_status_poll_flood_until = 0.0
+
 _last_session_seen = datetime.min.replace(tzinfo=timezone.utc)
 _last_session_poll_ok = datetime.min.replace(tzinfo=timezone.utc)  # آخرین poll موفق
 _session_poll_failures = 0          # شمارنده‌ی خطاهای متوالیِ poll
@@ -274,24 +283,42 @@ def _assistant_status_text():
                 f"الان به‌خاطرِ بازه‌ی زمان‌بندیِ «{window.get('label') or 'بدون‌برچسب'}» "
                 f"({_format_clock(window['start_minute'])}–{_format_clock(window['end_minute'])}) روشنه"
             )
+        elif config.ASSISTANT_PRESENCE_MODE == "status":
+            # حالتِ پیش‌فرض: تصمیم فقط با وضعیتِ آنلاین/آفلاینِ پروفایل
+            if _last_profile_status_online is None:
+                reason_text = "هنوز وضعیت از تلگرام پرسیده نشده (چند ثانیه بعد از استارت)"
+            elif _last_profile_status_online:
+                reason_text = "تلگرام می‌گه آنلاینی → منشی خاموش"
+            else:
+                reason_text = "تلگرام می‌گه آفلاینی → منشی روشن"
         else:
             local_gap = _seconds_since_activity()
             session_gap = _seconds_since_session()
             gaps = [g for g in (local_gap, session_gap) if g is not None]
             newest = min(gaps) if gaps else None
-            if newest is None:
+            sess_thr = config.ASSISTANT_SESSION_ONLINE_THRESHOLD
+            local_online = local_gap is not None and local_gap < config.ASSISTANT_ONLINE_THRESHOLD
+            session_online = bool(sess_thr) and session_gap is not None and session_gap < sess_thr
+            if local_gap is None and session_gap is None:
                 reason_text = "هنوز هیچ نشونه‌ای از استارت دیده نشده"
-            elif newest < config.ASSISTANT_ONLINE_THRESHOLD:
-                src_fa = "تو آنلاینی (نشونه‌ی تازه)"
-                reason_text = f"{src_fa} — {int(newest)} ثانیه پیش (آستانه‌ی آفلاین: {config.ASSISTANT_ONLINE_THRESHOLD}s)"
+            elif local_online or session_online:
+                src = "هر دو" if (local_online and session_online) else ("محلی" if local_online else "سشن‌ها")
+                gap = local_gap if local_online else session_gap
+                reason_text = f"تو آنلاینی ({src}) — {int(gap)} ثانیه پیش"
             else:
                 local_note = f"محلی: {int(local_gap)}s" if local_gap is not None else "محلی: —"
-                session_note = f"سشن‌ها: {int(session_gap)}s" if session_gap is not None else "سشن‌ها: —"
+                session_note = (
+                    f"سشن‌ها: {int(session_gap)}s" if session_gap is not None
+                    else ("سشن‌ها: خاموش" if not sess_thr else "سشن‌ها: —")
+                )
                 reason_text = (
                     f"بی‌سیگنال — {local_note} | {session_note} "
-                    f"(آستانه: {config.ASSISTANT_ONLINE_THRESHOLD}s)"
+                    f"(آستانه‌ها: {config.ASSISTANT_ONLINE_THRESHOLD}s محلی / {sess_thr}s سشن)"
                 )
-        control_line = f"خودکار ({reason_text})"
+        if config.ASSISTANT_PRESENCE_MODE == "status":
+            control_line = f"خودکار — از رویِ وضعیتِ آنلاین/آفلاینِ پروفایل ({reason_text})"
+        else:
+            control_line = f"خودکار ({reason_text})"
         footer = (
             f"با `{PREFIX}منشی روشن` یا `{PREFIX}منشی خاموش` می‌تونی دستی قفلش کنی "
             "(از اون به بعد حتی اگه آنلاین/آفلاین بشی یا داخلِ بازه‌ی زمان‌بندی باشی، تشخیص خودکار دیگه دست بهش نمی‌زنه)."
@@ -393,7 +420,12 @@ def _safe_recompute() -> None:
     (مثلاً حالتِ درون‌حافظه‌ای دستکاری‌شده) استثنایی داد، اینجا لاگ می‌شه و
     از آخرین enabled شناخته‌شده استفاده می‌کنیم - نه این‌که کلِ پاسخ‌دادن
     متوقف بشه.
+
+    در حالتِ تشخیصِ «status» کلاً کاری نمی‌کنه: اونجا تصمیم فقط با وضعیتِ
+    آنلاین/آفلاینِ پروفایل گرفته می‌شه (pollerِ وضعیت)، نه با پیام‌ها.
     """
+    if config.ASSISTANT_PRESENCE_MODE == "status":
+        return
     try:
         _recompute_enabled_from_signals()
     except Exception:
@@ -713,7 +745,9 @@ def _mark_activity(kind: str) -> None:
     global _last_self_activity, _last_self_activity_kind
     _last_self_activity = datetime.now(timezone.utc)
     _last_self_activity_kind = kind
-    if assistant_state["auto_detect"]:
+    # در حالتِ «status» فعال/غیرفعال‌شدن فقط از وضعیتِ آنلاین/آفلاینِ پروفایل
+    # تعیین می‌شه (نه از پیام‌ها) - پس اینجا enabled رو دست نمی‌زنیم.
+    if assistant_state["auto_detect"] and config.ASSISTANT_PRESENCE_MODE != "status":
         _safe_recompute()
 
 
@@ -780,26 +814,48 @@ def _recompute_enabled_from_signals() -> None:
         new_enabled = True
         reason = f"بازه‌ی زمان‌بندیِ «{(window or {}).get('label') or 'بدون‌برچسب'}»"
     else:
-        # دو لایه: هرکدوم «تازه» بود، حضور رو ثابت می‌کنه (OR):
+        # دو لایه با دو آستانه‌ی جدا:
+        #  - لایه‌ی محلی (پیام/خوندن از همین سشن‌های اکانت): آستانه‌ی معمول
+        #    (ASSISTANT_ONLINE_THRESHOLD) — سیگنالِ قوی و مطمئن.
+        #  - لایه‌ی سشن (date_active سشن‌های غیر-current): آستانه‌ی بزرگ‌تر
+        #    (ASSISTANT_SESSION_ONLINE_THRESHOLD، پیش‌فرض ۵۴۰ ثانیه) چون سشن‌های
+        #    بازِ دسکتاپ/وب گاهی فعالیت‌های ریزِ پس‌زمینه ثبت می‌کنند و نباید
+        #    به‌تنهایی جلوی روشن‌شدنِ منشی رو بگیرن.
+        # خاموش‌کردنِ لایه‌ی سشن: ASSISTANT_SESSION_ONLINE_THRESHOLD=0
         local_gap = _seconds_since_activity()
         session_gap = _seconds_since_session()
-        gaps = [g for g in (local_gap, session_gap) if g is not None]
-        newest = min(gaps) if gaps else None
+        sess_threshold = config.ASSISTANT_SESSION_ONLINE_THRESHOLD
+        sess_counts = bool(sess_threshold)  # ۰ یعنی لایه‌ی سشن کلاً کنار
 
-        if newest is None:
-            online = False  # هنوز هیچ منبعی چیزی ندیده - فرضِ امن
+        local_online = local_gap is not None and local_gap < config.ASSISTANT_ONLINE_THRESHOLD
+        session_online = (
+            sess_counts and session_gap is not None
+            and session_gap < sess_threshold
+        )
+        online = local_online or session_online
+
+        if local_gap is None and session_gap is None:
             reason = "هنوز هیچ سیگنالی از استارت دیده نشده"
-        elif newest < config.ASSISTANT_ONLINE_THRESHOLD:
-            online = True
-            src_fa = (
-                "سیگنالِ محلی" if local_gap == newest and session_gap != newest
-                else "سشن‌های اکانت" if session_gap == newest and local_gap != newest
-                else "هر دو منبع"
-            )
-            reason = f"{int(newest)} ثانیه پیش فعالیتی از {src_fa} دیدیم"
+        elif online:
+            if local_online and session_online:
+                src_fa = "هر دو منبع"
+            elif session_online:
+                src_fa = "سشن‌های اکانت"
+            else:
+                src_fa = "سیگنالِ محلی"
+            gap = local_gap if local_online else session_gap
+            thr = config.ASSISTANT_ONLINE_THRESHOLD if local_online else sess_threshold
+            reason = f"{int(gap)} ثانیه پیش فعالیتی از {src_fa} دیدیم (آستانه {int(thr)}s)"
         else:
-            online = False
-            reason = f"{int(newest)} ثانیه بی‌سیگنال (آستانه {config.ASSISTANT_ONLINE_THRESHOLD}s)"
+            parts = [f"محلی: {int(local_gap)}s" if local_gap is not None else "محلی: —"]
+            parts.append(
+                f"سشن‌ها: {int(session_gap)}s" if session_gap is not None
+                else ("سشن‌ها: خاموش" if not sess_counts else "سشن‌ها: —")
+            )
+            reason = (
+                "بی‌سیگنال — " + " | ".join(parts)
+                + f" (آستانه‌ها: {config.ASSISTANT_ONLINE_THRESHOLD}s / {sess_threshold}s)"
+            )
 
         new_enabled = not online
 
@@ -831,8 +887,19 @@ async def assistant_status_watcher():
     from .. import health
     while True:
         try:
-            if assistant_state["auto_detect"]:
+            # در حالتِ «status» این حلقه نباید از رویِ سیگنال‌های پیام تصمیم
+            # بگیره (تصمیم با pollerِ وضعیتِ پروفایله)؛ فقط زمان‌بندی رو چک
+            # می‌کنیم که اگر داخلِ بازه‌ی «حتماً روشن» بودیم، روشن بشه.
+            if assistant_state["auto_detect"] and config.ASSISTANT_PRESENCE_MODE != "status":
                 _recompute_enabled_from_signals()
+            elif assistant_state["auto_detect"]:
+                kind, window = _current_signal_reason()
+                if kind == "schedule" and not assistant_state["enabled"]:
+                    assistant_state["enabled"] = True
+                    logger.info(
+                        "منشی روشن شد - بازه‌ی زمان‌بندیِ «%s»",
+                        (window or {}).get("label") or "بدون‌برچسب",
+                    )
             health.update_worker_status("assistant", "ok")
         except Exception as exc:
             _record_error()
@@ -916,7 +983,10 @@ async def assistant_session_poller():
     await asyncio.sleep(10)  # بذار اتصالِ اولیه جا بیفته
     while True:
         try:
-            if assistant_state["auto_detect"]:
+            if (
+                config.ASSISTANT_PRESENCE_MODE == "signals"
+                and assistant_state["auto_detect"]
+            ):
                 ok = await _poll_session_activity()
                 health.update_worker_status(
                     "assistant_session_poll", "ok" if ok else "degraded"
@@ -933,3 +1003,96 @@ async def assistant_session_poller():
             except Exception:
                 pass
         await asyncio.sleep(config.ASSISTANT_SESSION_POLL_INTERVAL)
+
+
+async def _poll_profile_status() -> bool:
+    """
+    یک‌بار وضعیتِ آنلاین/آفلاینِ خودم رو از تلگرام می‌پرسه (همون چیزی که
+    توی اپِ دیگران دیده می‌شه: «آنلاین» یا «آخرین بازدید …»).
+
+    true = poll موفق (نتیجه در _last_profile_status_online ثبت شد)
+    false = این دور نه (خطا/FloodWait) - caller backoff رو مدیریت می‌کنه.
+    """
+    global _last_profile_status_online, _last_status_poll_ok
+    global _status_poll_failures, _status_poll_flood_until
+    import time as _time
+    from telethon import functions, errors as _errors
+    from telethon.tl.types import UserStatusOffline
+
+    now_epoch = _time.time()
+    if now_epoch < _status_poll_flood_until:
+        return False
+    try:
+        me = await client.get_me()
+        full = await client(functions.users.GetFullUserRequest(id=me))
+        user = full.users[0] if getattr(full, "users", None) else me
+        status = getattr(user, "status", None)
+        # UserStatusOnline → آنلاین؛ UserStatusOffline → آفلاین (هرچقدر هم
+        # was_online قدیمی باشه، تلگرام دیگه «آنلاین» نشونش نمی‌ده پس ما هم
+        # آفلاین حساب می‌کنیم - به‌محضِ عوض‌شدنِ لیبل). بقیه‌ی حالت‌ها
+        # (UserStatusRecently و …) یعنی مخفی/آفلاین از دیدِ لیبل.
+        _last_profile_status_online = not isinstance(status, UserStatusOffline)
+    except _errors.FloodWaitError as e:
+        wait = min(max(e.seconds, 30), 600)
+        _status_poll_flood_until = now_epoch + wait + 30
+        logger.warning("poll وضعیتِ پروفایل FloodWait داد - %s ثانیه صبر می‌کنیم", wait)
+        return False
+    except Exception:
+        _status_poll_failures += 1
+        backoff = min(60 * _status_poll_failures, 600)
+        _status_poll_flood_until = now_epoch + backoff
+        _record_error()
+        logger.warning(
+            "poll وضعیتِ پروفایل fail شد (تلاش متوالی %s) - %s ثانیه backoff",
+            _status_poll_failures, backoff, exc_info=True,
+        )
+        return False
+
+    _status_poll_failures = 0
+    _last_status_poll_ok = datetime.now(timezone.utc)
+    return True
+
+
+async def assistant_status_poller():
+    """
+    حالتِ پیش‌فرضِ تشخیص: هر ASSISTANT_STATUS_POLL_INTERVAL ثانیه مستقیم
+    «آنلاین بودنِ» خودت رو از تلگرام می‌پرسه و منشی رو به‌محضِ آفلاین‌شدنت
+    روشن می‌کنه (و به‌محضِ آنلاین‌شدنت خاموش). تصمیم به پیام‌های تو هیچ
+    ربطی نداره.
+    """
+    from .. import health
+    await asyncio.sleep(5)
+    while True:
+        try:
+            if (
+                config.ASSISTANT_PRESENCE_MODE == "status"
+                and assistant_state["auto_detect"]
+            ):
+                ok = await _poll_profile_status()
+                if ok:
+                    online = _last_profile_status_online
+                    desired = not online  # آنلاین → خاموش؛ آفلاین → روشن
+                    if desired != assistant_state["enabled"]:
+                        if desired:
+                            assistant_state["replied"] = set()
+                        assistant_state["enabled"] = desired
+                        logger.info(
+                            "منشی %s شد - وضعیتِ پروفایل: %s",
+                            "روشن" if desired else "خاموش",
+                            "آنلاین" if online else "آفلاین",
+                        )
+                health.update_worker_status(
+                    "assistant_status_poll", "ok" if ok else "degraded"
+                )
+            else:
+                health.update_worker_status("assistant_status_poll", "idle")
+        except Exception as exc:
+            _record_error()
+            logger.exception("خطا در poller وضعیتِ پروفایل - دورِ بعد ادامه می‌دیم")
+            try:
+                health.update_worker_status(
+                    "assistant_status_poll", "error", error=str(exc)
+                )
+            except Exception:
+                pass
+        await asyncio.sleep(config.ASSISTANT_STATUS_POLL_INTERVAL)
