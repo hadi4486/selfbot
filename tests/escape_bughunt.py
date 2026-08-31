@@ -1,6 +1,7 @@
 """باگ‌هانتِ شدیدِ اتاق فرار — سناریوهای مرزی و حملاتِ ورودی."""
 import os
 import random
+import re
 import sys
 
 os.environ.setdefault("API_ID", "12345")
@@ -168,22 +169,30 @@ check("ساختارِ همه‌ی پازل‌ها (۳ hint، جواب، prompt)"
 
 
 def t_logic_puzzle_consistency():
-    """معمای منطقی: جواب باید با جمله‌ها سازگار باشد — بازتولیدِ ۱۰۰ نمونه."""
+    """منطقی جدید: «دقیقاً یکی درست» → جواب باید مقدارِ یکتایِ ادعاها باشد (۵۰۰ نمونه)."""
     import bot.escape.puzzles as pz
-    for i in range(100):
+    def fa2en(s):
+        return s.translate(str.maketrans("۰۱۲۳۴۵۶۷۸۹", "0123456789"))
+    for i in range(500):
         rng = random.Random(i)
         p = pz.make_logic_puzzle(rng, "x")
-        # در متنِ پازل، جواب باید بینِ گزینه‌ها باشد
-        assert p["answer"] in p["prompt"], (i, p["answer"], p["prompt"])
-check("سازگاریِ معمای منطقی (۱۰۰ نمونه)", t_logic_puzzle_consistency)
+        claims = [int(fa2en(m.group(1))) for m in re.finditer(r"قفلِ درست، قفلِ ([۰-۹]+) است", p["prompt"])]
+        assert len(claims) == 3, p["prompt"]
+        ans = int(p["answer"])
+        assert sum(c == ans for c in claims) == 1, (i, claims, ans)
+check("سازگاریِ معمای منطقی (۵۰۰ نمونه)", t_logic_puzzle_consistency)
 
 
 def t_order_puzzle_answer_matches_prompt():
+    """ترتیب: جواب باید از promptِ نمایشی قابل‌استخراج باشد (کهنه→نو) — ۲۰۰ نمونه."""
     import bot.escape.puzzles as pz
-    rng = random.Random(7)
-    p = pz.make_order_puzzle(rng, "x")
-    assert p["answer"] == "1 2 3 4"  # چون objs دست‌نخورده نمایش داده می‌شود
-check("جوابِ معمای ترتیب با prompt سازگار", t_order_puzzle_answer_matches_prompt)
+    for i in range(200):
+        rng = random.Random(i)
+        p = pz.make_order_puzzle(rng, "x")
+        shown = [e for _, e in re.findall(r"(\d)\. (\S+)", p["prompt"])]
+        derived = " ".join(str(shown.index(e) + 1) for e in ["🥚", "🕯", "🕰", "📻"])
+        assert derived == p["answer"], (i, shown, p["answer"], derived)
+check("جوابِ معمای ترتیب با prompt سازگار (۲۰۰ نمونه)", t_order_puzzle_answer_matches_prompt)
 
 
 def t_time_limit_zero_elapsed():
