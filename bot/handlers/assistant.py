@@ -295,8 +295,6 @@ def _assistant_status_text():
         else:
             local_gap = _seconds_since_activity()
             session_gap = _seconds_since_session()
-            gaps = [g for g in (local_gap, session_gap) if g is not None]
-            newest = min(gaps) if gaps else None
             sess_thr = config.ASSISTANT_SESSION_ONLINE_THRESHOLD
             local_online = local_gap is not None and local_gap < config.ASSISTANT_ONLINE_THRESHOLD
             session_online = bool(sess_thr) and session_gap is not None and session_gap < sess_thr
@@ -925,6 +923,7 @@ async def _poll_session_activity() -> bool:
     backoff رو مدیریت می‌کنه. خودِ این تابع هرگز استثنا به بیرون نمی‌ده.
     """
     global _last_session_seen, _last_session_poll_ok, _session_poll_failures
+    global _session_poll_flood_until
     import time as _time
     import logging as _log
     from telethon import functions, errors as _errors

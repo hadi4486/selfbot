@@ -85,6 +85,7 @@ async def connection_watchdog():
       ۳) وضعیت رو برای `.سلامت` ثبت می‌کنه.
     """
     from bot import runtime
+    from bot import health
     from telethon import errors as _errors
 
     fail_streak = 0

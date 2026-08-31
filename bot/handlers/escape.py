@@ -14,7 +14,7 @@ import time
 from telethon import events
 
 from .. import runtime
-from ..config import PREFIX
+from ..config import PREFIX, TIMEZONE_OFFSET
 from ..repositories import escape_repo
 from ..runtime import client
 from ..storage.stats_store import record_error as _record_error
@@ -39,6 +39,19 @@ HELP_TEXT = (
     f"`{PREFIX}فرار رکورد` — جدولِ امتیازها\n"
     f"`{PREFIX}فرار لغو` — رهاکردنِ بازیِ جاری\n"
 )
+
+
+async def _load(chat_id: int, user_id: int) -> dict | None:
+    try:
+        raw = await escape_repo.load_session(chat_id, user_id)
+        # load_session خودش dict برمی‌گرداند (json.loads در repo)؛ در صورتِ str هم deserialize
+        if raw is None:
+            return None
+        return engine.deserialize(raw) if isinstance(raw, str) else raw
+    except Exception:
+        _record_error()
+        logger.exception("خطا در خواندنِ نشستِ اتاق فرار")
+        return None
 
 
 async def _save(chat_id: int, user_id: int, state: dict) -> None:
@@ -81,7 +94,6 @@ async def escape_handler(event):
     parts = raw.split(maxsplit=2)
     sub = parts[0].lower() if parts else ""
     rest = parts[1].strip() if len(parts) > 1 else ""
-    rest2 = parts[2].strip() if len(parts) > 2 else ""
     chat_id, user_id = event.chat_id, runtime.SELF_ID
 
     # --- دستورهای مستقل از نشست ---
@@ -112,7 +124,10 @@ async def escape_handler(event):
         return await event.edit("\n".join(lines))
 
     if sub == "روزانه":
-        today = time.strftime("%Y-%m-%d")
+        # روزِ چالش به وقتِ محلیِ کاربر (TIMEZONE_OFFSET؛ پیش‌فرض تهران) — هم‌ترازِ بقیه‌ی پروژه
+        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+        local_now = _dt.now(_tz.utc) + _td(hours=TIMEZONE_OFFSET)
+        today = local_now.strftime("%Y-%m-%d")
         used = await escape_repo.daily_attempt_used(chat_id, user_id, today)
         if used:
             return await event.edit(
@@ -224,6 +239,11 @@ async def escape_handler(event):
     except Exception:
         _record_error()
         logger.exception("خطای غیرمنتظره در اتاق فرار")
+        # state را ذخیره کن تا پیشرفتِ بازیکن از دست نرود
+        try:
+            await _save(chat_id, user_id, state)
+        except Exception:
+            logger.exception("ذخیره‌ی اضطراریِ state هم شکست خورد")
         return await event.edit("❌ خطای غیرمنتظره! بازیِ تو ذخیره شد؛ دوباره امتحان کن.")
 
     # اگر boss باید فعال شود و نشده
