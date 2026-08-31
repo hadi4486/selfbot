@@ -175,6 +175,12 @@ async def escape_handler(event):
             chat_id, user_id,
         )
 
+    # برای stateهایِ ناسازگار (مثل بازیِ شروع‌شده با نسخه‌ی قبلی): boss را در صورتِ نیاز فعال کن
+    try:
+        engine.boss_skip_guard(state)
+    except Exception:
+        pass
+
     try:
         if sub == "بررسی":
             res = engine.inspect(state)

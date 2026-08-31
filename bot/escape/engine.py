@@ -343,7 +343,9 @@ def answer(state: dict, raw: str) -> dict:
         ev = _maybe_event(state)
         return {"text": opt["msg"] + (f"\n\n⚡ {ev}" if ev else ""), "state": state, "kind": "choice"}
 
-    # ۲) boss
+    # ۲) boss (اگر هنوز فعال نشده ولی باید، همین‌جا فعالش کن — مقاوم به stateهای قدیمی)
+    if state["stage"] == _boss_index(state):
+        boss_skip_guard(state)
     if state["stage"] == _boss_index(state) and state.get("boss_answer") is not None:
         if pz.check_answer({"answer": state["boss_answer"]}, raw):
             return _win(state, perfect=not state["failed_attempts"] and len(state["clues"]) >= state["stages"])
