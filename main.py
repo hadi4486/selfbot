@@ -50,7 +50,7 @@ from bot.db.engine import dispose_engine
 from bot.plugin_loader import load_all_plugins
 from bot.clock import clock_updater
 from bot.handlers.autopost import autopost_worker
-from bot.handlers.assistant import assistant_status_watcher
+from bot.handlers.assistant import assistant_status_watcher, assistant_session_poller
 from bot.handlers.daily_digest import daily_digest_worker
 from bot.handlers.scheduler import scheduler_worker
 from bot.handlers.message_tracker import message_tracker_cleanup_worker
@@ -105,6 +105,7 @@ async def main():
     asyncio.create_task(clock_updater())
     asyncio.create_task(autopost_worker())
     asyncio.create_task(assistant_status_watcher())
+    asyncio.create_task(assistant_session_poller())
     asyncio.create_task(scheduler_worker())
     asyncio.create_task(daily_digest_worker())
     asyncio.create_task(stats_saver())

@@ -89,6 +89,24 @@ _ACTIVITY_KIND_FA = {
     "": "هنوز هیچ نشونه‌ای دیده نشده (از استارتِ پروسه)",
 }
 
+# --------------------------------------------------- لایه‌ی سشن‌های فعال ---
+# دومین (و دقیق‌ترین) منبعِ تشخیص: account.getAuthorizations برای هر سشنِ
+# اکانت (گوشی/دسکتاپ/وب) date_active برمی‌گردونه - آخرین باری که اون سشن
+# واقعاً کاری کرده. بیشینه‌ی این مقادیر روی همه‌ی سشن‌ها یعنی «آخرین فعالیتِ
+# انسانیِ اکانت از هر دستگاهی»، حتی اگه این پروسه اصلاً چیزی ندیده باشه.
+# datetime.min یعنی هنوز هیچ poll موفقی نداشتیم.
+_last_session_seen = datetime.min.replace(tzinfo=timezone.utc)
+_last_session_poll_ok = datetime.min.replace(tzinfo=timezone.utc)  # آخرین poll موفق
+_session_poll_failures = 0          # شمارنده‌ی خطاهای متوالیِ poll
+_session_poll_flood_until = 0.0     # timestampِ epoch تا وقتی که flood/خطا رو با backoff منتظر بمونیم
+_last_session_kind_fa = "—"
+
+_ACTIVITY_KIND_FA_NOTE = {
+    "message": "فرستادنِ پیامِ واقعی",
+    "read": "خوندنِ پیام (از هر دستگاهی)",
+    "session": "فعالیتِ سشن‌های اکانت (هر دستگاهی)",
+}
+
 # شمارنده‌ی «همین الان دارم توی این چت auto-reply می‌فرستم» (chat_id -> تعداد
 # درحال‌ارسال). قبل از فرستادنِ پاسخ (نه بعدش) پر می‌شه تا خودِ پاسخِ منشی
 # به‌غلط به‌عنوانِ «کاربر همین الان پیام فرستاد/خوند» حساب نشه و بلافاصله
@@ -226,7 +244,24 @@ def _current_signal_reason() -> tuple[str, dict | None]:
 
 
 def _seconds_since_activity() -> float:
+    """سکوت از دیدِ سیگنال‌های محلی (پیام/ریید) - لایه‌ی بلادرنگ."""
     return (datetime.now(timezone.utc) - _last_self_activity).total_seconds()
+
+
+def _seconds_since_session() -> float:
+    """سکوت از دیدِ date_active سشن‌های اکانت (لایه‌ی دقیق؛ هر دستگاهی).
+
+    اگه poll از کار افتاده باشه (خطای مکرر/FloodWait) یا داده‌شده از سقفِ
+    ASSISTANT_SESSION_MAX_AGE کهنه‌تر باشه، یعنی این لایه الان قابلِ اعتماد
+    نیست و باید مثهِ «همیشه‌آنلاین» (۰ ثانیه) رفتار نکنه؛ به‌جاش None برمی‌گردونیم
+    تا تصمیم فقط بر اساسِ لایه‌ی محلی گرفته بشه - نه نشونه‌ی کهنه.
+    """
+    if _last_session_poll_ok == datetime.min.replace(tzinfo=timezone.utc):
+        return None  # هنوز هیچ poll موفقی نبوده
+    age = (datetime.now(timezone.utc) - _last_session_poll_ok).total_seconds()
+    if age > config.ASSISTANT_SESSION_MAX_AGE:
+        return None
+    return (datetime.now(timezone.utc) - _last_session_seen).total_seconds()
 
 
 def _assistant_status_text():
@@ -240,12 +275,22 @@ def _assistant_status_text():
                 f"({_format_clock(window['start_minute'])}–{_format_clock(window['end_minute'])}) روشنه"
             )
         else:
-            elapsed = int(_seconds_since_activity())
-            last_kind_fa = _ACTIVITY_KIND_FA.get(_last_self_activity_kind, _last_self_activity_kind)
-            reason_text = (
-                f"بر اساسِ آخرین نشونه‌ی فعالیت ({last_kind_fa})؛ "
-                f"{elapsed} از {config.ASSISTANT_ONLINE_THRESHOLD} ثانیه سکوت گذشته"
-            )
+            local_gap = _seconds_since_activity()
+            session_gap = _seconds_since_session()
+            gaps = [g for g in (local_gap, session_gap) if g is not None]
+            newest = min(gaps) if gaps else None
+            if newest is None:
+                reason_text = "هنوز هیچ نشونه‌ای از استارت دیده نشده"
+            elif newest < config.ASSISTANT_ONLINE_THRESHOLD:
+                src_fa = "تو آنلاینی (نشونه‌ی تازه)"
+                reason_text = f"{src_fa} — {int(newest)} ثانیه پیش (آستانه‌ی آفلاین: {config.ASSISTANT_ONLINE_THRESHOLD}s)"
+            else:
+                local_note = f"محلی: {int(local_gap)}s" if local_gap is not None else "محلی: —"
+                session_note = f"سشن‌ها: {int(session_gap)}s" if session_gap is not None else "سشن‌ها: —"
+                reason_text = (
+                    f"بی‌سیگنال — {local_note} | {session_note} "
+                    f"(آستانه: {config.ASSISTANT_ONLINE_THRESHOLD}s)"
+                )
         control_line = f"خودکار ({reason_text})"
         footer = (
             f"با `{PREFIX}منشی روشن` یا `{PREFIX}منشی خاموش` می‌تونی دستی قفلش کنی "
@@ -735,10 +780,28 @@ def _recompute_enabled_from_signals() -> None:
         new_enabled = True
         reason = f"بازه‌ی زمان‌بندیِ «{(window or {}).get('label') or 'بدون‌برچسب'}»"
     else:
-        seconds_since_self = _seconds_since_activity()
-        online = seconds_since_self < config.ASSISTANT_ONLINE_THRESHOLD
+        # دو لایه: هرکدوم «تازه» بود، حضور رو ثابت می‌کنه (OR):
+        local_gap = _seconds_since_activity()
+        session_gap = _seconds_since_session()
+        gaps = [g for g in (local_gap, session_gap) if g is not None]
+        newest = min(gaps) if gaps else None
+
+        if newest is None:
+            online = False  # هنوز هیچ منبعی چیزی ندیده - فرضِ امن
+            reason = "هنوز هیچ سیگنالی از استارت دیده نشده"
+        elif newest < config.ASSISTANT_ONLINE_THRESHOLD:
+            online = True
+            src_fa = (
+                "سیگنالِ محلی" if local_gap == newest and session_gap != newest
+                else "سشن‌های اکانت" if session_gap == newest and local_gap != newest
+                else "هر دو منبع"
+            )
+            reason = f"{int(newest)} ثانیه پیش فعالیتی از {src_fa} دیدیم"
+        else:
+            online = False
+            reason = f"{int(newest)} ثانیه بی‌سیگنال (آستانه {config.ASSISTANT_ONLINE_THRESHOLD}s)"
+
         new_enabled = not online
-        reason = f"{int(seconds_since_self)} ثانیه سکوت (آستانه {config.ASSISTANT_ONLINE_THRESHOLD})"
 
     if new_enabled != assistant_state["enabled"]:
         if new_enabled:
@@ -781,3 +844,85 @@ async def assistant_status_watcher():
             except Exception:
                 pass
         await asyncio.sleep(config.ASSISTANT_CHECK_INTERVAL)
+
+
+async def _poll_session_activity() -> bool:
+    """
+    یک‌بار account.getAuthorizations رو صدا می‌زنه و max(date_active) روی
+    همه‌ی سشن‌ها رو به‌عنوانِ آخرین فعالیتِ انسانی ثبت می‌کنه.
+
+    true یعنی poll موفق بود؛ false یعنی امشب نه (خطا/FloodWait) - caller
+    backoff رو مدیریت می‌کنه. خودِ این تابع هرگز استثنا به بیرون نمی‌ده.
+    """
+    global _last_session_seen, _last_session_poll_ok, _session_poll_failures
+    import time as _time
+    import logging as _log
+    from telethon import functions, errors as _errors
+
+    now_epoch = _time.time()
+    if now_epoch < _session_poll_flood_until:
+        return False
+    try:
+        result = await client(functions.account.GetAuthorizationsRequest())
+    except _errors.FloodWaitError as e:
+        wait = min(max(e.seconds, 30), 600)
+        _session_poll_flood_until = now_epoch + wait + 30
+        logger.warning("poll سشن‌ها FloodWait داد - %s ثانیه صبر می‌کنیم", wait)
+        return False
+    except Exception:
+        _session_poll_failures += 1
+        backoff = min(60 * _session_poll_failures, 600)
+        _session_poll_flood_until = now_epoch + backoff
+        _record_error()
+        logger.warning(
+            "poll سشن‌ها fail شد (تلاش متوالی %s) - %s ثانیه backoff",
+            _session_poll_failures, backoff, exc_info=True,
+        )
+        return False
+
+    _session_poll_failures = 0
+    now = datetime.now(timezone.utc)
+    newest = None
+    for auth in getattr(result, "authorizations", []) or []:
+        active = getattr(auth, "date_active", None)
+        if active is None:
+            continue
+        if active.tzinfo is None:
+            active = active.replace(tzinfo=timezone.utc)
+        if newest is None or active > newest:
+            newest = active
+    if newest is not None:
+        _last_session_seen = max(_last_session_seen, newest)
+    _last_session_poll_ok = now
+    return True
+
+
+async def assistant_session_poller():
+    """
+    لایه‌ی دومِ تشخیصِ حضور: با فاصله‌ی ASSISTANT_SESSION_POLL_INTERVAL ثانیه،
+    date_active سشن‌های اکانت رو چک می‌کنه. حتی اگه این پروسه هیچ پیامی ندیده
+    باشه، هر تعاملِ تو با اپ تلگرام (توی هر دستگاهی) اینجا ثبت می‌شه - پس
+    منشی دیگه وسطِ حضورت (مثلاً وقتی فقط داری می‌خونی و چیزی نمی‌فرستی)
+    روشن نمی‌شه.
+    """
+    from .. import health
+    await asyncio.sleep(10)  # بذار اتصالِ اولیه جا بیفته
+    while True:
+        try:
+            if assistant_state["auto_detect"]:
+                ok = await _poll_session_activity()
+                health.update_worker_status(
+                    "assistant_session_poll", "ok" if ok else "degraded"
+                )
+            else:
+                health.update_worker_status("assistant_session_poll", "idle")
+        except Exception as exc:
+            _record_error()
+            logger.exception("خطا در poller سشن‌های منشی - دورِ بعد ادامه می‌دیم")
+            try:
+                health.update_worker_status(
+                    "assistant_session_poll", "error", error=str(exc)
+                )
+            except Exception:
+                pass
+        await asyncio.sleep(config.ASSISTANT_SESSION_POLL_INTERVAL)
