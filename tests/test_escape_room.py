@@ -176,3 +176,29 @@ def test_all_scenario_playthroughs():
                 else:
                     break
         assert st["status"] == "won", f"سناریوی {scen['id']} برد نشد: {st['status']}"
+
+
+def test_all_scenarios_winnable():
+    """رگرسیون: هر ۸ سناریو × ۳ کاربر باید با جریانِ عادی قابلِ برد باشد."""
+    import re as _re
+    from bot.escape.scenarios import SCENARIOS
+    for sc in SCENARIOS:
+        for uid in (1, 2, 3):
+            st = engine.create_game(uid, 100, scenario_id=sc["id"])
+            steps = 0
+            while st["status"] == "running" and steps < 60:
+                steps += 1
+                if st["stage"] == engine._boss_index(st) and st.get("boss_answer"):
+                    engine.answer(st, st["boss_answer"])
+                    break
+                if st.get("pending_choice"):
+                    m = _re.search(r"پاسخ: (\d+)", st["pending_choice"]["text"])
+                    try:
+                        engine.answer(st, m.group(1) if m else "1")
+                    except engine.EscapeError:
+                        st["pending_choice"] = None
+                    continue
+                cp = st["puzzles"].get(st.get("current_puzzle") or "")
+                assert cp is not None, f"{sc['id']}: گیر در stage={st['stage']}"
+                engine.answer(st, cp["answer"])
+            assert st["status"] == "won", f"{sc['id']} uid{uid}: {st['status']}"

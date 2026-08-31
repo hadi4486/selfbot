@@ -453,10 +453,19 @@ def _win(state: dict, *, perfect: bool) -> dict:
 
 
 def boss_skip_guard(state: dict) -> bool:
-    """اگر همه‌ی پازل‌ها حل شده ولی boss هنوز فعال نشده، فعالش کن (در اکشن‌ها)."""
+    """در مرحله‌ی boss: اگر همه‌ی پازل‌ها حل شده و boss خاموش است فعالش کن؛
+    اگر هنوز پازل مانده، پازلِ معوق را به جریان برگردان (self-heal — هرگز گیر/سوختنِ بی‌دلیل)."""
+    if state["stage"] != _boss_index(state):
+        return False
     remaining = [pid for pid in state["puzzles"] if pid not in state["solved"]]
-    if state["stage"] == _boss_index(state) and not remaining and state.get("boss_answer") is None:
-        _activate_boss(state)
+    if not remaining:
+        if state.get("boss_answer") is None:
+            _activate_boss(state)
+            return True
+        return False
+    # پازل‌های معوق: جریانِ پازل را ترمیم کن
+    if state.get("current_puzzle") not in state["puzzles"] or state["current_puzzle"] in state["solved"]:
+        state["current_puzzle"] = remaining[0]
         return True
     return False
 

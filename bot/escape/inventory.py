@@ -86,7 +86,7 @@ def render_inventory(inv: dict[str, int]) -> str:
     """نمایشِ کوله؛ خالی نبودنِ این متن را هندلر چک می‌کند."""
     lines = []
     for item_id, qty in inv.items():
-        d = item_def(item_id) or {"emoji": "❔", "name": item_id}
+        d = item_def(item_id) or {"emoji": "❔", "name": item_id if not item_id.startswith("__") else "آیتم ناشناخته"}
         qty_s = f" ×{qty}" if qty > 1 else ""
         lines.append(f"{d['emoji']} {d['name']}{qty_s}")
     return "\n".join(lines) or "(خالی)"
