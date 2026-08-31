@@ -884,6 +884,13 @@ async def _poll_session_activity() -> bool:
     now = datetime.now(timezone.utc)
     newest = None
     for auth in getattr(result, "authorizations", []) or []:
+        # ⚠️ سشنِ current (همین پروسه‌ی سلف‌بات) باید حذف بشه: date_active اون
+        # با هر درخواستِ خودِ بات (از جمله همین poll) تازه می‌شه و اگه شمرده بشه،
+        # همیشه «تو آنلاینی» جعل می‌کنه و منشی هیچ‌وقت روشن نمی‌شه. فقط سشن‌های
+        # واقعاً انسانی (گوشی/دسکتاپ/وبِ خودت) معیارِ حضورن - درسِ گرفته‌شده از
+        # نسخه‌ی قدیمی تک‌فایلی.
+        if getattr(auth, "current", False):
+            continue
         active = getattr(auth, "date_active", None)
         if active is None:
             continue

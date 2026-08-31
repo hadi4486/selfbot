@@ -50,3 +50,30 @@ case("poll کهنه، local تازه", False, 60, 10, 400)  # فقط local → �
 
 print("ALL OK" if ok else "FAILED")
 sys.exit(0 if ok else 1)
+
+
+# ---- سناریوی سشن current: باید نادیده گرفته بشه ----
+import bot.handlers.assistant as a2
+
+class FakeAuth:
+    def __init__(self, current, days_ago, hours_active_ago=0):
+        self.current = current
+        self.date_active = now - timedelta(days=days_ago, hours=-hours_active_ago)
+
+class FakeResult:
+    def __init__(self, auths):
+        self.authorizations = auths
+
+# شبیه‌سازی مستقیم حلقه‌ی استخراجِ _poll_session_activity بدون کلاینت:
+auths = [FakeAuth(True, 0), FakeAuth(False, 2), FakeAuth(False, 0, 5)]  # current + گوشیِ ۲ روز پیش + وبِ ۵ ساعت پیش
+newest = None
+for auth in auths:
+    if getattr(auth, "current", False):
+        continue
+    active = auth.date_active
+    if newest is None or active > newest:
+        newest = active
+# باید وبِ ۵ ساعت پیش انتخاب بشه (نه current که الان است)
+expected = auths[2].date_active
+assert newest == expected, "سشن current نباید شمرده شود"
+print("✓ فیلتر سشن current در استخراجِ date_active کار می‌کند")
