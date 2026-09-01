@@ -116,8 +116,15 @@ async def user_profile_handler(event):
             user_id = reply.sender_id
 
     # یا از آرگومان
-    if not user_id and args and args[0].isdigit():
+    if not user_id and args and args[0].lstrip("-").isdigit():
         user_id = int(args[0])
+
+    if not user_id and args:
+        # آرگومان داده شده ولی شناسه‌ی عددی نیست — ساکتِ «پروفایلِ خودت» نکن
+        return await event.edit(
+            "❌ شناسه‌ی عددی بده یا روی پیامِ طرف ریپلای کن.\n"
+            f"مثال: `{PREFIX}کاربر 123456789`"
+        )
 
     if not user_id:
         # کاربر خودش
