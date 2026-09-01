@@ -40,7 +40,6 @@ from . import (
     inbox,
     smart_reply,
     ai_memory,
-    user_profile,
     global_search,
     notifications,
     automation,
