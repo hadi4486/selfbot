@@ -148,6 +148,8 @@ def _maybe_event(state: dict) -> str | None:
     if key in state["events_seen"][-3:]:
         return None
     state["events_seen"].append(key)
+    if len(state["events_seen"]) > 20:  # سقفِ حافظه؛ فقط چندتایِ آخر لازم است
+        del state["events_seen"][:-20]
     if ev.get("hp"):
         state["hp"] = max(0, state["hp"] + ev["hp"])
     if ev.get("score"):

@@ -41,6 +41,8 @@ async def flush_message_activity() -> None:
         try:
             await activity_repo.increment_messages(chat_id, count, date)
         except Exception:
+            # برگرداندنِ شمارش به بافر تا دورِ بعد دوباره تلاش شود (عدمِ گم‌شدنِ آمار)
+            _pending_messages[(chat_id, date)] = _pending_messages.get((chat_id, date), 0) + count
             logger.exception("خطا در ذخیره‌ی شمارشِ پیام‌های چت %s", chat_id)
 
 

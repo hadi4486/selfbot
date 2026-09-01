@@ -1042,6 +1042,10 @@ async def snakes_handler(event):
         if len(SNAKES_GAMES) >= _MAX_SNAKES_GAMES:
             for k in list(SNAKES_GAMES.keys())[:_MAX_SNAKES_GAMES // 2]:
                 SNAKES_GAMES.pop(k, None)
+        # نگاشتِ via-bot هم سقف داشته باشد تا بازی‌های رهاشده نشت نکنند
+        if len(SNAKES_INLINE_CHATS) >= _MAX_SNAKES_GAMES:
+            for k in list(SNAKES_INLINE_CHATS.keys())[:_MAX_SNAKES_GAMES // 2]:
+                SNAKES_INLINE_CHATS.pop(k, None)
         game = {"pos": 0, "bot": 0 if vs_bot else None, "vs_bot": vs_bot, "msg_id": None}
         SNAKES_GAMES[chat_id] = game
         mode_line = "🤖 **حالت: تو در برابرِ ربات**" if vs_bot else "🧑 **حالتِ تک‌نفره**"

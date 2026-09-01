@@ -119,6 +119,15 @@ async def stats_saver():
     from .. import health
     while True:
         await asyncio.sleep(config.STATS_SAVE_INTERVAL)
-        await save_stats()
-        await flush_message_activity()
-        health.update_worker_status("stats", "ok")
+        try:
+            await save_stats()
+            await flush_message_activity()
+            health.update_worker_status("stats", "ok")
+        except Exception:
+            # قطعیِ موقتِ DB نباید workerِ آمار را برای همیشه از بین ببرد
+            _record_error()
+            logger.exception("ذخیره‌ی دوره‌ایِ آمار شکست خورد - دورِ بعد دوباره")
+            try:
+                health.update_worker_status("stats", "error", "save failed")
+            except Exception:
+                pass

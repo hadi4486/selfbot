@@ -132,6 +132,14 @@ async def connection_watchdog():
                         "اتصال بعد از %s دورِ متوالی برنگشت - پروسه برای ری‌استارتِ "
                         "خودکارِ Railway بسته می‌شه", fail_streak,
                     )
+                    # آخرین فرصت: بافرهای آمار/فعالیت را فلاش کن (اگر DB در دسترس است)
+                    try:
+                        from bot.storage.stats_store import save_stats as _save_stats
+                        from bot.storage.activity_store import flush_message_activity as _flush
+                        await _save_stats()
+                        await _flush()
+                    except Exception:
+                        logger.exception("فلاشِ آمار قبل از exit شکست خورد (نادیده گرفته شد)")
                     import os as _os
                     _os._exit(1)
         except Exception:
@@ -141,11 +149,6 @@ async def connection_watchdog():
 
 async def main():
     await get_http_session()  # ساخت ClientSession مشترک قبل از شروع کار
-
-    # هاندلری خروج خلصیتن برای بهتر بستن پروسه از پیشنهدنی تلگرام دریافت بشه
-    def _shutdown_handler():
-        logger.info("درحالت خروج شخص شد در حال بهتر بستن پروسه...")
-    # signal.signal(signal.SIGTERM, _shutdown_handler)  # در موقعیت برنامهریزی فعال میشه
 
     # باید قبل از استارت شدنِ تسک‌های پس‌زمینه انجام بشه، وگرنه اون تسک‌ها با
     # مقادیر پیش‌فرض (نه آخرین وضعیتِ ذخیره‌شده در PostgreSQL) شروع می‌کنن.
@@ -189,8 +192,44 @@ async def main():
     asyncio.create_task(price_alert_worker())
     asyncio.create_task(recurring_worker())
     asyncio.create_task(connection_watchdog())
+
+    # خاموشیِ تمیز: signal handler (خارج از loop) فقط این event را set می‌کند؛
+    # خودِ قطعِ تمیز اینجا داخلِ loop انجام می‌شود (run_until_completeِ تودرتو مجاز نیست).
+    shutdown_event = asyncio.Event()
+
+    def _request_shutdown():
+        loop = client.loop
+        loop.call_soon_threadsafe(shutdown_event.set)
+
+    global _shutdown_request_fn
+    _shutdown_request_fn = _request_shutdown
+
+    async def _clean_disconnect():
+        try:
+            await client.disconnect()
+        except Exception:
+            logger.exception("disconnectِ اکانت شکست خورد")
+        if bot_client is not None:
+            try:
+                await bot_client.disconnect()
+            except Exception:
+                logger.exception("disconnectِ بات پنل شکست خورد")
+
     try:
-        await client.run_until_disconnected()
+        disconnected_task = asyncio.ensure_future(client.run_until_disconnected())
+        shutdown_task = asyncio.ensure_future(shutdown_event.wait())
+        done, _pending = await asyncio.wait(
+            {disconnected_task, shutdown_task}, return_when=asyncio.FIRST_COMPLETED
+        )
+        if shutdown_event.is_set() and not disconnected_task.done():
+            # سیگنال رسید: قطعِ تمیز قبل از خروج
+            await _clean_disconnect()
+            # ۲ ثانیه فرصت تا تلگرام قطع‌شدنِ سشن را ثبت کند و دیپلویِ جدید
+            # «هم‌زمانِ دو IP» حساب نشود (پیشگیری از AuthKeyDuplicated).
+            await asyncio.sleep(2)
+            disconnected_task.cancel()
+        elif disconnected_task.done() and disconnected_task.exception():
+            raise disconnected_task.exception()
     finally:
         # آخرین شانس برای ذخیره‌ی آماری که هنوز توی بافرِ درون‌حافظه‌ست (هم
         # STATS و هم شمارشِ پیام‌های activity) - وگرنه با هر ری‌دیپلوی روی
@@ -200,10 +239,21 @@ async def main():
             await flush_message_activity()
         except Exception:
             logger.exception("خطا در ذخیره‌ی نهاییِ آمار هنگام خاموش‌شدن")
+        try:
+            await _clean_disconnect()
+        except Exception:
+            logger.exception("خطا در قطعِ نهایی")
         await close_http_session()
-        if bot_client is not None:
-            await bot_client.disconnect()
         await dispose_engine()
+
+
+_shutdown_request_fn = None
+
+
+def _request_shutdown_from_signal():
+    """فقط فلگِ خاموشی را داخلِ loop set می‌کند (thread-safe)."""
+    if _shutdown_request_fn is not None:
+        _shutdown_request_fn()
 
 
 if __name__ == "__main__":
@@ -212,30 +262,17 @@ if __name__ == "__main__":
     def _signal_handler(sig, frame):
         """
         خاموشیِ تمیز روی SIGTERM/SIGINT (Railway موقعِ هر ری‌دیپلوی/ری‌استارت
-        SIGTERM می‌فرسته). ⚠️ این بخش حیاتیِ جلوگیری از ابطالِ سشن است:
-        اگه موقعِ خاموشی disconnect نکنیم، اتصالِ سشن از IP قدیمی چند ثانیه/
-        دقیقه‌ای زنده می‌مونه؛ دیپلویِ جدید از IP جدید با همون auth key وصل
-        می‌شه و تلگرام «هم‌زمانِ دو IP» رو می‌بینه → AuthKeyDuplicated →
-        سشن برای همیشه باطل می‌شه (دقیقاً همون «SESSION_STRING غیرفعال شد»).
-        disconnectِ تمیز یعنی تلگرام قبل از بالا آمدنِ دپلویِ جدید سشنِ قدیمی
-        رو بسته دیده.
+        SIGTERM می‌فرسته). ⚠️ این بخش حیاتیِ جلوگیری از ابطالِ سشن است.
+        ⚠️ این هندلر خارج از event loop اجرا می‌شود؛ هیچ await/run_until_complete
+        اینجا مجاز نیست — فقط فلگ را thread-safe به loop می‌فرستیم و بقیه‌ی
+        خاموشی (disconnect + flush) داخلِ main() انجام می‌شود.
         """
-        logger.info("سیگنال %s دریافت شد - در حال بستنِ تمیز اتصال‌ها...", sig)
+        logger.info("سیگنال %s دریافت شد - درخواستِ خاموشیِ تمیز...", sig)
         try:
-            # هر دو کلاینت باید فوری قطع بشن؛ future-less و مستقیم
-            client.loop.run_until_complete(client.disconnect())
-            from bot import runtime as _rt
-            if _rt.bot_client is not None and _rt.bot_client.is_connected():
-                _rt.bot_client.loop.run_until_complete(_rt.bot_client.disconnect())
-            # ۲ ثانیه فرصت تا تلگرام قطع‌شدنِ سشنِ قدیمی را ثبت کند و
-            # دیپلویِ جدید (با همان سشن) بلافاصله «هم‌زمانِ دو IP» حساب نشود.
-            import time as _t
-            _t.sleep(2)
+            _request_shutdown_from_signal()
         except Exception:
-            logger.exception("خطا در قطعِ تمیز روی سیگنال - به هر حال خارج می‌شویم")
-        raise SystemExit(0)
+            pass
 
-    # ثبت signal handler برای خاموشی تمیز
     signal.signal(signal.SIGTERM, _signal_handler)
     signal.signal(signal.SIGINT, _signal_handler)
 

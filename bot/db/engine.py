@@ -54,15 +54,20 @@ DATABASE_URL = _normalize_database_url(config.DATABASE_URL)
 
 _is_sqlite = DATABASE_URL.startswith("sqlite")
 
-engine = create_async_engine(
-    DATABASE_URL,
-    poolclass=NullPool if _is_sqlite else AsyncAdaptedQueuePool,
-    pool_size=None if _is_sqlite else config.DB_POOL_SIZE,
-    max_overflow=None if _is_sqlite else config.DB_MAX_OVERFLOW,
-    pool_pre_ping=not _is_sqlite,  # جلوگیری از استفاده از کانکشنِ مرده بعد از idle طولانی
-    pool_recycle=None if _is_sqlite else config.DB_POOL_RECYCLE_SECONDS,
-    echo=config.DB_ECHO,
-)
+_engine_kwargs: dict = {"echo": config.DB_ECHO}
+if _is_sqlite:
+    # sqlite/aiosqlite (تست‌های محلی): پارامترهایِ poolِ postgres را نمی‌پذیرد
+    _engine_kwargs["poolclass"] = NullPool
+else:
+    _engine_kwargs.update(
+        poolclass=AsyncAdaptedQueuePool,
+        pool_size=config.DB_POOL_SIZE,
+        max_overflow=config.DB_MAX_OVERFLOW,
+        pool_pre_ping=True,  # جلوگیری از استفاده از کانکشنِ مرده بعد از idle طولانی
+        pool_recycle=config.DB_POOL_RECYCLE_SECONDS,
+    )
+
+engine = create_async_engine(DATABASE_URL, **_engine_kwargs)
 
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
