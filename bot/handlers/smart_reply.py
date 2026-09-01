@@ -91,6 +91,13 @@ async def smart_reply_handler(event):
         return await event.edit("❌ پاسخ تولید نشد. دوباره امتحان کنید.")
 
     # ذخیره پیشنهاد در حافظه موقت برای ارسال
+    # پاک‌سازیِ entryهای منقضی (TTL فقط در لحظه‌ی ارسال چک نمی‌شود تا چت‌های
+    # رهاشده بی‌نهایت در dict نمانند) + سقفِ کل برای اطمینانِ دوگانه
+    now = time.time()
+    for cid in [cid for cid, pr in _pending_replies.items() if now - pr["created_at"] > _PENDING_TTL]:
+        _pending_replies.pop(cid, None)
+    while len(_pending_replies) >= _PENDING_MAX_CHATS:
+        _pending_replies.pop(next(iter(_pending_replies)))
     _pending_replies[event.chat_id] = {
         "text": response,
         "reply_to": reply.id,
@@ -107,6 +114,7 @@ async def smart_reply_handler(event):
 # حافظه موقت برای پاسخ‌های در انتظار
 _pending_replies = {}
 _PENDING_TTL = 120  # ثانیه
+_PENDING_MAX_CHATS = 200  # سقفِ چت‌های درانتظار (ضدِ نشتِ حافظه)
 
 
 async def _send_reply(event, args):

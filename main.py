@@ -176,22 +176,43 @@ async def main():
         bot_me = await bot_client.get_me()
         set_bot_username(bot_me.username)
         logger.info("بات کمکیِ پنل به @%s وصل شد", bot_me.username)
-        asyncio.create_task(bot_client.run_until_disconnected())
+        _spawn(bot_client.run_until_disconnected())
     else:
         logger.warning("BOT_TOKEN تنظیم نشده؛ «.پنل» فقط راهنما می‌ده (بقیه‌ی دستورات عادی کار می‌کنن)")
 
-    asyncio.create_task(clock_updater())
-    asyncio.create_task(autopost_worker())
-    asyncio.create_task(assistant_status_watcher())
-    asyncio.create_task(assistant_session_poller())
-    asyncio.create_task(assistant_status_poller())
-    asyncio.create_task(scheduler_worker())
-    asyncio.create_task(daily_digest_worker())
-    asyncio.create_task(stats_saver())
-    asyncio.create_task(message_tracker_cleanup_worker())
-    asyncio.create_task(price_alert_worker())
-    asyncio.create_task(recurring_worker())
-    asyncio.create_task(connection_watchdog())
+    # تسک‌های پس‌زمینه: reference نگه می‌داریم (GC قادر به جمع‌کردنشان نشود) و
+    # یک callback اطمینان می‌دهد اگر هرکدام exception بدهد، در لاگ ببینیم — نه
+    # «fire and forget»ِ خاموش که خرابی‌اش نامرئی می‌ماند.
+    _bg_tasks: set[asyncio.Task] = set()
+
+    def _bg_done(task: asyncio.Task) -> None:
+        _bg_tasks.discard(task)
+        if not task.cancelled() and task.exception() is not None:
+            logger.error(
+                "تسکِ پس‌زمینه با خطا متوقف شد: %r", task.exception()
+            )
+
+    def _spawn(coro) -> asyncio.Task:
+        t = asyncio.create_task(coro)
+        _bg_tasks.add(t)
+        t.add_done_callback(_bg_done)
+        return t
+
+    for _worker in (
+        clock_updater,
+        autopost_worker,
+        assistant_status_watcher,
+        assistant_session_poller,
+        assistant_status_poller,
+        scheduler_worker,
+        daily_digest_worker,
+        stats_saver,
+        message_tracker_cleanup_worker,
+        price_alert_worker,
+        recurring_worker,
+        connection_watchdog,
+    ):
+        _spawn(_worker())
 
     # خاموشیِ تمیز: signal handler (خارج از loop) فقط این event را set می‌کند؛
     # خودِ قطعِ تمیز اینجا داخلِ loop انجام می‌شود (run_until_completeِ تودرتو مجاز نیست).
@@ -228,6 +249,10 @@ async def main():
             # «هم‌زمانِ دو IP» حساب نشود (پیشگیری از AuthKeyDuplicated).
             await asyncio.sleep(2)
             disconnected_task.cancel()
+            try:
+                await disconnected_task
+            except (asyncio.CancelledError, Exception):
+                logger.debug("disconnected_task بعد از خاموشی بسته شد", exc_info=True)
         elif disconnected_task.done() and disconnected_task.exception():
             raise disconnected_task.exception()
     finally:
@@ -271,7 +296,9 @@ if __name__ == "__main__":
         try:
             _request_shutdown_from_signal()
         except Exception:
-            pass
+            # حتی اگر setشدنِ فلگ شکست بخورد، پروسه با SIGTERMِ بعدی/پایانِ
+            # کانتینر بسته می‌شود؛ ولی برای عیب‌یابی در لاگ می‌آید.
+            logger.exception("setشدنِ فلگِ خاموشی شکست خورد")
 
     signal.signal(signal.SIGTERM, _signal_handler)
     signal.signal(signal.SIGINT, _signal_handler)

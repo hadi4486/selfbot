@@ -492,7 +492,7 @@ async def pornfilter_watcher(event):
         try:
             await increment_deleted(event.chat_id, 1)
         except Exception:
-            pass
+            logger.debug("شمارشِ پیامِ حذف‌شده ثبت نشد", exc_info=True)
         return
 
     # حذف شکست خورد (معمولاً: سلف ادمین این گروه نیست یا محدودیتِ تلگرام) -

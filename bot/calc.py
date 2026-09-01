@@ -20,14 +20,30 @@ CALC_FUNCS = {
 }
 CALC_CONSTS = {"pi": math.pi, "e": math.e, "tau": math.tau, "inf": math.inf}
 
+# سقفِ اندازه‌ی عددِ مجاز (~۲۵۶ بیت ≈ ۷۷ رقم) - ضدِ DoS با توان/فاکتوریلِ بزرگ
+_MAX_BITS = 256
+
 
 def safe_eval(expr):
     """ماشین‌حساب امن - عملیات ریاضی + توابع/ثابت‌های رایج، بدون اجرای کد دلخواه"""
+    # ضدِ DoS: توانِ زنجیره‌ایِ بزرگ (مثل 9**9**9) عددِ چند-گیگابایتی می‌سازد و
+    # event loop را دقیقه‌ها بلاک می‌کند؛ قبل از محاسبه سقف بگذار.
     def _eval(node):
         if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            if isinstance(node.value, int) and node.value.bit_length() > _MAX_BITS:
+                raise ValueError("عدد خیلی بزرگ است")
             return node.value
         if isinstance(node, ast.BinOp) and type(node.op) in _OPS:
-            return _OPS[type(node.op)](_eval(node.left), _eval(node.right))
+            left = _eval(node.left)
+            right = _eval(node.right)
+            if isinstance(node.op, ast.Pow):
+                # نتیجه‌ی a**b حداکثر ~bit_length(a)*b بیت دارد؛ قبل از اجرا چک کن
+                bl = 1
+                if isinstance(left, (int, float)):
+                    bl = max(1, abs(left)).bit_length() if isinstance(left, int) else 64
+                if isinstance(right, int) and bl * max(right, 0) > _MAX_BITS:
+                    raise ValueError("نتیجه‌ی توان خیلی بزرگ است")
+            return _OPS[type(node.op)](left, right)
         if isinstance(node, ast.UnaryOp) and type(node.op) in _OPS:
             return _OPS[type(node.op)](_eval(node.operand))
         if isinstance(node, ast.Name) and node.id in CALC_CONSTS:
@@ -35,6 +51,10 @@ def safe_eval(expr):
         if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
                 and node.func.id in CALC_FUNCS and not node.keywords):
             args = [_eval(a) for a in node.args]
+            if node.func.id == "factorial":
+                n = args[0] if args else 0
+                if isinstance(n, int) and (n < 0 or n > 10000):
+                    raise ValueError("آرگومانِ factorial خیلی بزرگ است")
             return CALC_FUNCS[node.func.id](*args)
         raise ValueError("عبارت نامعتبر")
     tree = ast.parse(expr, mode="eval")

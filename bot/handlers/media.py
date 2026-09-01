@@ -226,7 +226,7 @@ async def compress_handler(event):
 
 
 # ------------------------------------------------------------------- تبدیل
-@client.on(events.NewMessage(outgoing=True, pattern=pat(["تبدیل", "convert"])))
+@client.on(events.NewMessage(outgoing=True, pattern=pat(["تبدیل", "mediaconvert"])))
 async def convert_handler(event):
     target = (event.pattern_match.group(1) or "").strip().lower().lstrip(".")
     if not event.is_reply or not target:

@@ -28,6 +28,11 @@ async def memory_handler(event):
     args = (event.pattern_match.group(1) or "").strip().split()
     sub = args[0].lower() if args else ""
 
+    # تفکیک از بازیِ حافظه‌ی اعداد (fun.py همین pattern را دارد):
+    # «شروع/لغو/عدد» مالِ بازی است — اینجا کاری با آن نداریم.
+    if sub in ("شروع", "start", "لغو", "cancel", "stop") or (sub.lstrip("-").isdigit() and sub):
+        return None
+
     if not sub:
         return await _show_memory_stats(event)
 

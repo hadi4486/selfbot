@@ -206,7 +206,8 @@ def test_all_scenarios_winnable():
             assert st["status"] == "won", f"{sc['id']} uid{uid}: {st['status']}"
 
 # ---------------- سناریوهایِ v2 (بیمارستان/تئاتر/بانک/مترو/قطب) ----------------
-NEW_SCENARIOS = ["hospital", "theater", "bank", "subway", "arctic"]
+NEW_SCENARIOS = ["hospital", "theater", "bank", "subway", "arctic",
+                  "coldwar", "circus", "ship", "temple", "airport", "casino", "observatory"]
 
 
 def _play_to_end(state):

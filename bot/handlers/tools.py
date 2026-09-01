@@ -127,7 +127,7 @@ async def translate_handler(event):
         await event.edit("❌ خطا در ترجمه (زبانِ مقصد رو با کدِ دو-حرفی بده، مثلاً en/fa/ar)")
 
 
-@client.on(events.NewMessage(outgoing=True, pattern=pat(["جستجو", "google"])))
+@client.on(events.NewMessage(outgoing=True, pattern=pat(["گوگل", "google"])))
 async def google_handler(event):
     q = event.pattern_match.group(1)
     if not q:

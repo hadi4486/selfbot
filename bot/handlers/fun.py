@@ -1071,7 +1071,7 @@ async def snakes_handler(event):
                             game["msg_id"] = mid
                             break
                 except Exception:
-                    pass
+                    logger.debug("استخراجِ msg_id از inline updates شکست خورد", exc_info=True)
                 try:
                     await event.delete()
                 except Exception:
@@ -1252,6 +1252,12 @@ async def memory_handler(event):
     """
     arg = (event.pattern_match.group(1) or "").strip()
     chat_id = event.chat_id
+
+    # تفکیک از `.حافظه`ِ حافظه‌ی AI (ai_memory.py با همین pattern ثبت شده):
+    # بازی فقط «شروع/لغو/عدد» را مصرف می‌کند؛ بقیه برای handlerِ حافظه‌ی AI می‌ماند.
+    _sub0 = arg.split()[0].lower() if arg.split() else ""
+    if _sub0 not in ("شروع", "start", "لغو", "cancel", "stop") and not arg.lstrip("-").isdigit():
+        return None
 
     if arg.lower() in ("لغو", "cancel", "stop"):
         game = MEMORY_GAMES.pop(chat_id, None)

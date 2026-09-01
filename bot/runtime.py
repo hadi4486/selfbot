@@ -9,10 +9,43 @@ from telethon import TelegramClient
 
 from . import config
 
+# اعتبارسنجیِ زودهنگامِ متغیرهای ضروری: به‌جای ValueErrorِ خامِ Telethon وسطِ
+# استارتاپ (که روی Railway فقط یک crash-loop بی‌توضیح می‌سازد)، پیامِ واضح و
+# راهنمادار بده و با exit-code غیرصفر خارج شو.
+import sys
+
+if not config.API_ID or not config.API_HASH:
+    print(
+        "❌ Missing environment variable: API_ID / API_HASH\n"
+        "   از my.telegram.org → API development tools بگیر و در Railway\n"
+        "   Variables (یا فایلِ .env) ست کن. سپس دوباره دیپلوی کن.",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+if not config.SESSION_STRING:
+    print(
+        "⚠️ SESSION_STRING خالی است — از فایلِ selfbot_session استفاده می‌شود؛\n"
+        "   روی Railway این یعنی سشنِ احرازنشده! با `python generate_session.py`\n"
+        "   یک StringSession بساز و در متغیرِ SESSION_STRING بگذار.",
+        file=sys.stderr,
+    )
+
 if config.SESSION_STRING:
     from telethon.sessions import StringSession
+    try:
+        _session = StringSession(config.SESSION_STRING)
+    except Exception:
+        # SESSION_STRING خراب/بریده/کپی‌نشده کامل — به‌جای ValueErrorِ خامِ
+        # Telethon ("Not a valid string") پیامِ عملیاتیِ واضح بده.
+        print(
+            "❌ Telegram session is invalid.\n"
+            "   مقدارِ SESSION_STRING معتبر نیست (خراب/ناقص). یک سشنِ جدید بساز:\n"
+            "   `python generate_session.py` و کلِ خروجی را در SESSION_STRING بگذار.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
     client = TelegramClient(
-        StringSession(config.SESSION_STRING),
+        _session,
         config.API_ID,
         config.API_HASH,
         device_model="selfbot-py",     # قابل‌شناسایی در «سشن‌های فعال» تلگرام

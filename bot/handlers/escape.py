@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 HELP_TEXT = (
     "🔐 **اتاق فرار متنی**\n\n"
-    f"`{PREFIX}فرار شروع` — شروعِ بازی (سناریوی تصادفی از ۱۳ داستان)\n"
+    f"`{PREFIX}فرار شروع` — شروعِ بازی (سناریوی تصادفی از ۲۰ داستان)\n"
     f"`{PREFIX}فرار بررسی` — زیر و رو کردنِ محیطِ فعلی\n"
     f"`{PREFIX}فرار استفاده <آیتم>` — استفاده از آیتمِ کوله\n"
     f"`{PREFIX}فرار ترکیب <آیتم۱> <آیتم۲>` — ساختنِ ابزارِ جدید\n"
@@ -194,7 +194,7 @@ async def escape_handler(event):
     try:
         engine.boss_skip_guard(state)
     except Exception:
-        pass
+        logger.debug("boss_skip_guard روی state قدیمی شکست خورد", exc_info=True)
 
     try:
         if sub == "بررسی":
