@@ -168,18 +168,6 @@ async def main():
         "StringSession از env" if config.SESSION_STRING else "فایل selfbot_session",
     )
 
-    # بات کمکیِ پنل (اختیاری) - چون تلگرام دکمه‌های شیشه‌ای رو فقط برای
-    # پیام‌های ارسالی از طرف یه بات واقعی نمایش می‌ده، دستور «.پنل» پنل
-    # دکمه‌ای رو از طریق این بات (نه اکانت شخصی) نشون می‌ده.
-    if bot_client is not None:
-        await bot_client.start(bot_token=config.BOT_TOKEN)
-        bot_me = await bot_client.get_me()
-        set_bot_username(bot_me.username)
-        logger.info("بات کمکیِ پنل به @%s وصل شد", bot_me.username)
-        _spawn(bot_client.run_until_disconnected())
-    else:
-        logger.warning("BOT_TOKEN تنظیم نشده؛ «.پنل» فقط راهنما می‌ده (بقیه‌ی دستورات عادی کار می‌کنن)")
-
     # تسک‌های پس‌زمینه: reference نگه می‌داریم (GC قادر به جمع‌کردنشان نشود) و
     # یک callback اطمینان می‌دهد اگر هرکدام exception بدهد، در لاگ ببینیم — نه
     # «fire and forget»ِ خاموش که خرابی‌اش نامرئی می‌ماند.
@@ -197,6 +185,18 @@ async def main():
         _bg_tasks.add(t)
         t.add_done_callback(_bg_done)
         return t
+
+    # بات کمکیِ پنل (اختیاری) - چون تلگرام دکمه‌های شیشه‌ای رو فقط برای
+    # پیام‌های ارسالی از طرف یه بات واقعی نمایش می‌ده، دستور «.پنل» پنل
+    # دکمه‌ای رو از طریق این بات (نه اکانت شخصی) نشون می‌ده.
+    if bot_client is not None:
+        await bot_client.start(bot_token=config.BOT_TOKEN)
+        bot_me = await bot_client.get_me()
+        set_bot_username(bot_me.username)
+        logger.info("بات کمکیِ پنل به @%s وصل شد", bot_me.username)
+        _spawn(bot_client.run_until_disconnected())
+    else:
+        logger.warning("BOT_TOKEN تنظیم نشده؛ «.پنل» فقط راهنما می‌ده (بقیه‌ی دستورات عادی کار می‌کنن)")
 
     for _worker in (
         clock_updater,

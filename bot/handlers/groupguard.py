@@ -138,7 +138,11 @@ async def _is_admin_or_creator(event) -> bool:
     if cached is not None and now - cached[1] < _ADMIN_CACHE_TTL:
         return cached[0]
     try:
-        perms = await event.get_permissions()
+        # ⚠️ NewMessage.Event متدِ get_permissions ندارد (فقط ChatAction دارد) —
+        # نسخه‌ی قبلی AttributeError می‌داد و همیشه به fail-open می‌افتاد (یعنی
+        # فیلترها برای همه غیرفعال!). درست: client.get_permissions با entityِ
+        # چت از خودِ event (چتِ فرستنده در session کش است؛ resolve می‌شود).
+        perms = await client.get_permissions(await event.get_input_chat(), user_id)
         is_admin = bool(getattr(perms, "is_admin", False) or getattr(perms, "is_creator", False))
     except Exception:
         # fallback دوم: GetParticipantRequest خام (بدون نیاز به resolveِ سشنِ تک‌کاربر)
