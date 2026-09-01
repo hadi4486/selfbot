@@ -26,6 +26,8 @@ ITEMS: dict[str, dict] = {
     "crystal": {"name": "بلور", "emoji": "💎", "desc": "وقتی نور می‌خورد رنگ عوض می‌کند", "type": "material", "usable": True, "combinable": True},
     "chip": {"name": "تراشه", "emoji": "💾", "desc": "پردازنده‌ای با حروفِ محوشده", "type": "part", "usable": True, "combinable": True},
     "keycard": {"name": "کارتِ دسترسی", "emoji": "🪪", "desc": "کارتی که ردیابِ قرمز دارد", "type": "key", "usable": True, "combinable": True},
+    "radio": {"name": "رادیوی مخابراتی", "emoji": "📻", "desc": "بی‌باتری؛ کلیدِ فرکانسش گم است", "type": "tool", "usable": True, "combinable": True},
+    "mask": {"name": "ماسکِ فیلتردار", "emoji": "😷", "desc": "فیلترش هنوز تازه است", "type": "tool", "usable": True, "combinable": True},
 }
 
 # ---------- ترکیب‌ها: (a, b) → (خروجی، پیام) ----------
@@ -38,6 +40,8 @@ COMBINE_RULES: dict[tuple[str, str], tuple[str, str]] = {
     ("puzzle_piece", "tape"): ("puzzle_fixed", "🧩 قطعه‌ی پازل با چسب سرِ جایش نشست — تصویر نیمه‌کاره کامل‌تر شد."),
     ("chip", "battery"): ("chip_active", "💾 تراشه روشن شد و یه ردیفِ عدد رویش چشمک زد."),
     ("key", "handle"): ("key_tool", "🔑 کلید را روی دسته سوار کردی — یک ابزارِ خلاقانه!"),
+    ("radio", "battery"): ("radio_active", "📻 رادیو روشن شد؛ صدای ضبطِ قدیمی‌ای از فرکانسِ ۹۸.۲ می‌آید…"),
+    ("rope", "crystal"): ("talisman", "💎 بلور را به طناب بستی — طلسمی که در تاریکی می‌درخشد و راه را نشان می‌دهد."),
 }
 
 COMBINED_ITEMS: dict[str, dict] = {
@@ -49,6 +53,8 @@ COMBINED_ITEMS: dict[str, dict] = {
     "puzzle_fixed": {"name": "پازلِ کامل‌شده", "emoji": "🖼", "desc": "تصویری که یک عدد رویش است", "type": "clue", "usable": True, "combinable": False},
     "chip_active": {"name": "تراشه‌ی فعال", "emoji": "🖥", "desc": "اعدادِ چشمک‌زن رویِ تراشه", "type": "clue", "usable": True, "combinable": False},
     "key_tool": {"name": "ابزارِ کلید", "emoji": "🛠", "desc": "کلید با دسته‌ای محکم", "type": "tool", "usable": True, "combinable": False},
+    "radio_active": {"name": "رادیوی روشن", "emoji": "🔊", "desc": "فرکانسِ ۹۸.۲: صدایی که راهنمایت است", "type": "clue", "usable": True, "combinable": False},
+    "talisman": {"name": "طلسمِ بلورین", "emoji": "🔮", "desc": "در تاریکیِ کامل نورِ آبی می‌پراکند", "type": "tool", "usable": True, "combinable": False},
 }
 
 

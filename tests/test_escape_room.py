@@ -2,6 +2,8 @@
 import os
 import sys
 
+import pytest
+
 os.environ.setdefault("API_ID", "12345")
 os.environ.setdefault("API_HASH", "x")
 os.environ.setdefault("DATABASE_URL", "postgresql://p:p@localhost/p")
@@ -202,3 +204,53 @@ def test_all_scenarios_winnable():
                 assert cp is not None, f"{sc['id']}: گیر در stage={st['stage']}"
                 engine.answer(st, cp["answer"])
             assert st["status"] == "won", f"{sc['id']} uid{uid}: {st['status']}"
+
+# ---------------- سناریوهایِ v2 (بیمارستان/تئاتر/بانک/مترو/قطب) ----------------
+NEW_SCENARIOS = ["hospital", "theater", "bank", "subway", "arctic"]
+
+
+def _play_to_end(state):
+    """بازیِ کاملِ خودکار: همه‌ی پازل‌ها + انتخاب‌ها + boss."""
+    for _ in range(80):
+        if state["status"] != "running":
+            return state
+        if state.get("pending_choice"):
+            state = engine.answer(state, "1")["state"]
+            continue
+        if state.get("boss_answer") is not None:
+            state = engine.answer(state, state["boss_answer"])["state"]
+            continue
+        pid = state["current_puzzle"]
+        if pid is None:
+            return state
+        state = engine.answer(state, state["puzzles"][pid]["answer"])["state"]
+    return state
+
+
+@pytest.mark.parametrize("sid", NEW_SCENARIOS)
+def test_new_scenarios_winnable(sid):
+    st = engine.create_game(1, 1, scenario_id=sid)
+    st = _play_to_end(st)
+    assert st["status"] == "won", f"{sid} → {st['status']} در stage={st['stage']}"
+
+
+def test_new_scenarios_unique_ids_and_items():
+    from bot.escape.scenarios import SCENARIOS
+    from bot.escape.inventory import ITEMS, COMBINED_ITEMS
+    valid = set(ITEMS) | set(COMBINED_ITEMS)
+    ids = [s["id"] for s in SCENARIOS]
+    for sid in NEW_SCENARIOS:
+        assert ids.count(sid) == 1
+        scen = next(s for s in SCENARIOS if s["id"] == sid)
+        assert len(scen["rooms"]) == 6 and scen["objects"] and scen["choices"] and scen["boss"]
+        for room, objs in scen["objects"].items():
+            assert room in scen["rooms"]
+            for _name, _desc, gives in objs:
+                for it in gives or []:
+                    assert it in valid, f"{sid}: آیتمِ ناشناخته {it}"
+
+
+def test_new_combinations():
+    assert inventory.combine("radio", "battery") is not None
+    assert inventory.combine("rope", "crystal") is not None
+    assert inventory.item_def("radio_active") and inventory.item_def("talisman")
