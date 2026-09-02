@@ -13,6 +13,10 @@ def _cb(action: str) -> bytes:
     return f"{CB_PREFIX}{action}".encode()
 
 
+def _divider() -> str:
+    return "────────────────────────"
+
+
 # هر بخش: کلید (برای callback)، ایموجی، عنوان، و لیست دستورات (دقیقاً هماهنگ با راهنما).
 CATEGORIES = [
     {
@@ -451,84 +455,131 @@ CATEGORIES = [
     },
 ]
 
-# ============================ گروه‌بندیِ سه‌سطحی (صفحه‌ی اول خلوت) ====
-GROUPS = [
-    {
-        "key": "g_assistant",
-        "emoji": "🤖",
-        "title": "دستیارِ شخصی",
-        "cats": ["personal", "assistant", "inbox", "ai_memory", "global_search", "smart_reply"],
-    },
-    {
-        "key": "g_automation",
-        "emoji": "⚡",
-        "title": "اتوماسیون و زمان",
-        "cats": ["scheduler", "automation", "notifications", "autopost", "daily_digest", "message_tracker"],
-    },
-    {
-        "key": "g_tools",
-        "emoji": "🛠",
-        "title": "ابزار و هوش مصنوعی",
-        "cats": ["tools", "ai", "command_router", "media", "audio"],
-    },
-    {
-        "key": "g_group",
-        "emoji": "👮",
-        "title": "گروه و کاربران",
-        "cats": ["admin", "profile", "notes", "poll", "msg"],
-    },
-    {
-        "key": "g_fun",
-        "emoji": "🎉",
-        "title": "سرگرمی و ظاهر",
-        "cats": ["fun", "font", "general"],
-    },
-    {
-        "key": "g_system",
-        "emoji": "🛡",
-        "title": "سیستم و پشتیبان",
-        "cats": ["backup", "security", "health", "settings_center", "plugins_cmd", "stats"],
-    },
+# ============================ پنلِ V2 — Command Center مینیمال ====
+# ساختار: HOME (Quick Actions + ۷ دسته + جستجو) → دسته → بخش → دستورها
+# + ⭐ Favorites و 🕘 Recent (پایدار در settings، JSON) + 🔍 جستجوی دستور
+#
+# دسته‌های V2 (۹ گروهِ منطقی — «دکمه‌ی کم‌اهمیت در Home دیده نمی‌شود»):
+V2_GROUPS = [
+    {"key": "v_ai",         "emoji": "🧠", "title": "هوش مصنوعی",    "cats": ["ai", "ai_memory", "smart_reply", "command_router", "assistant"]},
+    {"key": "v_productive", "emoji": "📥", "title": "بهره‌وری",       "cats": ["inbox", "personal", "scheduler", "notes", "profile"]},
+    {"key": "v_tools",      "emoji": "🛠", "title": "ابزارها",        "cats": ["tools", "media", "audio", "global_search", "font", "general"]},
+    {"key": "v_auto",       "emoji": "⚡", "title": "اتوماسیون",      "cats": ["automation", "notifications", "autopost", "daily_digest", "message_tracker"]},
+    {"key": "v_group",      "emoji": "👮", "title": "مدیریتِ گروه",   "cats": ["admin", "msg", "poll"]},
+    {"key": "v_fun",        "emoji": "🎮", "title": "سرگرمی",         "cats": ["fun"]},
+    {"key": "v_plugins",    "emoji": "🧩", "title": "پلاگین‌ها",      "cats": ["plugins_cmd"]},
+    {"key": "v_system",     "emoji": "⚙️", "title": "تنظیمات و سیستم", "cats": ["settings_center", "backup", "security", "health", "stats"]},
 ]
 
+# Quick Actions: عملیاتِ پرکاربرد — یک هندلرِ واقعی از پروژه (نه فقط بخشِ پنل).
+QUICK_ACTIONS = [
+    {"emoji": "🧠", "label": "پرسش AI", "text": ".پرسش"},
+    {"emoji": "📥", "label": "اینباکس", "text": ".اینباکس"},
+    {"emoji": "📝", "label": "کارها", "text": ".کار"},
+    {"emoji": "🎮", "label": "اتاقِ فرار", "text": ".فرار"},
+]
+
+# بخش‌هایی که دکمه‌ی ⭐/🕘 دارند (همه).
+_FAV_KEY = "panel_favorites"
+_RECENT_KEY = "panel_recent"
+
 _CATEGORY_BY_KEY = {cat["key"]: cat for cat in CATEGORIES}
-_GROUP_BY_KEY = {g["key"]: g for g in GROUPS}
+_V2_BY_KEY = {g["key"]: g for g in V2_GROUPS}
 
 # اعتبارسنجی: هر cat باید دقیقاً در یک گروه باشد (در import-time چک می‌شود تا
 # اضافه‌شدنِ دسته‌ی جدیدِ فراموش‌شده همان‌جا معلوم شود).
-_assigned = [k for g in GROUPS for k in g["cats"]]
-assert len(_assigned) == len(set(_assigned)), "دسته‌ی تکراری در GROUPS!"
+_assigned = [k for g in V2_GROUPS for k in g["cats"]]
+assert len(_assigned) == len(set(_assigned)), "دسته‌ی تکراری در V2_GROUPS!"
 _missing = set(_CATEGORY_BY_KEY) - set(_assigned)
 assert not _missing, f"دسته‌های بی‌گروه: {_missing}"
 
 
-def _divider():
-    return "◈─────────────────◈"
+# ------------------------------------------------------------- favorites/recent
+async def _get_json_setting(key: str, default):
+    from ..repositories import settings_repo
+
+    return await settings_repo.get_setting_json(key, default)
 
 
+async def _push_json_setting(key: str, value: str, max_items: int):
+    """value را به ابتدای لیستِ JSON-key اضافه می‌کند (بدونِ تکرار، سقف‌دار)."""
+    from ..repositories import settings_repo
+
+    items = await settings_repo.get_setting_json(key, [])
+    if not isinstance(items, list):
+        items = []
+    if value in items:
+        items.remove(value)
+    items.insert(0, value)
+    await settings_repo.set_setting_json(key, items[:max_items])
+
+
+async def _toggle_favorite(cat_key: str) -> bool:
+    from ..repositories import settings_repo
+
+    favs = await settings_repo.get_setting_json(_FAV_KEY, [])
+    if not isinstance(favs, list):
+        favs = []
+    if cat_key in favs:
+        favs.remove(cat_key)
+        state = False
+    else:
+        favs.insert(0, cat_key)
+        state = True
+    await settings_repo.set_setting_json(_FAV_KEY, favs[:10])
+    return state
+
+
+def _cat_label(cat_key: str) -> str:
+    cat = _CATEGORY_BY_KEY.get(cat_key)
+    return f"{cat['emoji']} {cat['title']}" if cat else cat_key
+
+
+# ------------------------------------------------------------- home
 def build_home_text():
     total_commands = sum(len(c["commands"]) for c in CATEGORIES)
     return (
-        "👑 **پـنـل مـدیـریت سـلـف‌بـات** 👑\n"
+        "🤖 **HADI ASSISTANT**\n"
         f"{_divider()}\n"
-        f"🗂 **{len(GROUPS)}** گروه   •   📂 **{len(CATEGORIES)}** بخش   •   ⚙️ **{total_commands}** دستور\n"
-        f"🔡 پیشوند: `{PREFIX}`\n\n"
-        "یک گروه رو باز کن، بعد بخشِ موردنظر رو انتخاب کن.\n"
-        "⚠️ دستورها رو با اکانت خودت (نه این ربات) توی چت مقصد بفرست."
+        f"🟢 آنلاین   •   ⚙️ {total_commands} دستور   •   🔡 `{PREFIX}`\n"
+        "از دکمه‌های زیر انتخاب کن ⬇️"
     )
 
 
-def build_home_buttons():
+def build_home_buttons(favorites=None, recents=None):
+    favorites = favorites or []
     rows = []
+
+    # ⭐ موردعلاقه‌ها (اگر هست) — دو‌ستونه
+    fav_rows = []
     row = []
-    for g in GROUPS:
-        n_cmds = sum(len(_CATEGORY_BY_KEY[k]["commands"]) for k in g["cats"])
-        row.append(Button.inline(f"{g['emoji']} {g['title']} ({n_cmds})", _cb(f"grp:{g['key']}")))
+    for key in favorites[:6]:
+        if key in _CATEGORY_BY_KEY:
+            cat = _CATEGORY_BY_KEY[key]
+            row.append(Button.inline(f"⭐ {cat['emoji']} {cat['title']}", _cb(f"cat:{key}")))
+            if len(row) == 2:
+                fav_rows.append(row)
+                row = []
+    if row:
+        fav_rows.append(row)
+    if fav_rows:
+        rows.append([Button.inline("⭐ موردعلاقه‌ها", _cb("noop"))])
+        rows.extend(fav_rows)
+
+    # دسته‌های اصلی — دو‌ستونه (۸ دکمه = ۴ ردیف)
+    row = []
+    for g in V2_GROUPS:
+        row.append(Button.inline(f"{g['emoji']} {g['title']}", _cb(f"grp:{g['key']}")))
         if len(row) == 2:
             rows.append(row)
             row = []
     if row:
         rows.append(row)
+
+    # 🔍 جستجو + 🕘 اخیر + داشبورد/بستن
+    rows.append([Button.inline("🔍 جستجوی دستور", _cb("search"))])
+    if recents:
+        rows.append([Button.inline("🕘 اخیراً استفاده‌شده", _cb("recent"))])
     rows.append([
         Button.inline("📊 داشبورد", _cb("dash")),
         Button.inline("✖️ بستن پنل", _cb("close")),
@@ -536,8 +587,58 @@ def build_home_buttons():
     return rows
 
 
+def build_search_results_text(query: str, matches):
+    lines = [f"🔎 **نتایجِ «{query}»** ({len(matches)})", _divider(), ""]
+    for cat_key, cmd_line in matches[:10]:
+        cat = _CATEGORY_BY_KEY[cat_key]
+        lines.append(f"{cat['emoji']} {cmd_line}")
+    if len(matches) > 10:
+        lines.append(f"\n… و {len(matches) - 10} موردِ دیگر")
+    return "\n".join(lines)
+
+
+def build_search_buttons(matches):
+    rows = []
+    row = []
+    for cat_key, _ in matches[:10]:
+        cat = _CATEGORY_BY_KEY[cat_key]
+        row.append(Button.inline(f"{cat['emoji']} {cat['title']}", _cb(f"cat:{cat_key}")))
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([Button.inline("🔙 بازگشت", _cb("home"))])
+    return rows
+
+
+def build_recent_text(recents):
+    lines = ["🕘 **اخیراً استفاده‌شده**", _divider(), ""]
+    for key in recents[:8]:
+        if key in _CATEGORY_BY_KEY:
+            cat = _CATEGORY_BY_KEY[key]
+            lines.append(f"{cat['emoji']} **{cat['title']}** — {len(cat['commands'])} دستور")
+    return "\n".join(lines)
+
+
+def build_recent_buttons(recents):
+    rows = []
+    row = []
+    for key in recents[:8]:
+        if key in _CATEGORY_BY_KEY:
+            cat = _CATEGORY_BY_KEY[key]
+            row.append(Button.inline(f"{cat['emoji']} {cat['title']}", _cb(f"cat:{key}")))
+            if len(row) == 2:
+                rows.append(row)
+                row = []
+    if row:
+        rows.append(row)
+    rows.append([Button.inline("🔙 بازگشت", _cb("home"))])
+    return rows
+
+
 def build_group_text(group):
-    lines = [f"{group['emoji']} **گروهِ {group['title']}**", _divider(), ""]
+    lines = [f"{group['emoji']} **{group['title']}**", _divider(), ""]
     for key in group["cats"]:
         cat = _CATEGORY_BY_KEY[key]
         lines.append(f"{cat['emoji']} **{cat['title']}** — {len(cat['commands'])} دستور")
@@ -558,6 +659,7 @@ def build_group_buttons(group):
         rows.append(row)
     rows.append([Button.inline("🔙 بازگشت", _cb("home")), Button.inline("✖️ بستن", _cb("close"))])
     return rows
+
 
 
 def build_category_text(cat):
@@ -663,7 +765,7 @@ if runtime.bot_client is not None:
         builder = event.builder
         result = builder.article(
             title="👑 باز کردن پنل مدیریت",
-            description=f"{len(GROUPS)} گروه / {len(CATEGORIES)} بخش را همین‌جا نمایش بده",
+            description=f"{len(V2_GROUPS)} دسته / {len(CATEGORIES)} بخش / {sum(len(c['commands']) for c in CATEGORIES)} دستور — با جستجو و موردعلاقه‌ها",
             text=build_home_text(),
             buttons=build_home_buttons(),
         )
@@ -680,8 +782,40 @@ if runtime.bot_client is not None:
         action = data[len(CB_PREFIX):]
 
         if action == "home":
-            await event.edit(build_home_text(), buttons=build_home_buttons())
+            favs = await _get_json_setting(_FAV_KEY, [])
+            recents = await _get_json_setting(_RECENT_KEY, [])
+            await event.edit(build_home_text(), buttons=build_home_buttons(favs, recents))
             await event.answer()
+            return
+
+        if action == "noop":
+            await event.answer()
+            return
+
+        if action == "recent":
+            recents = await _get_json_setting(_RECENT_KEY, [])
+            await event.edit(build_recent_text(recents), buttons=build_recent_buttons(recents))
+            await event.answer()
+            return
+
+        if action == "search":
+            await event.answer("🔍 توی چتِ خودت بنویس: `.پنل پیدا <عبارت>`", alert=True)
+            return
+
+        if action.startswith("star:"):
+            key = action[len("star:"):]
+            is_fav = await _toggle_favorite(key)
+            favs = await _get_json_setting(_FAV_KEY, [])
+            cat = _CATEGORY_BY_KEY.get(key)
+            if cat:
+                label = "⭐ حذف از موردعلاقه‌ها" if is_fav else "⭐ افزودن به موردعلاقه‌ها"
+                await event.edit(
+                    build_category_text(cat),
+                    buttons=[[Button.inline(label, _cb(f"star:{key}")),
+                              Button.inline("🔙 بازگشت", _cb("home")),
+                              Button.inline("✖️ بستن", _cb("close"))]],
+                )
+            await event.answer("⭐ اضافه شد" if is_fav else "از موردعلاقه‌ها حذف شد")
             return
 
         if action == "dash":
@@ -714,7 +848,7 @@ if runtime.bot_client is not None:
 
         if action.startswith("grp:"):
             gkey = action[len("grp:"):]
-            group = _GROUP_BY_KEY.get(gkey)
+            group = _V2_BY_KEY.get(gkey)
             if group is None:
                 await event.answer("یافت نشد.", alert=True)
                 return
@@ -728,14 +862,50 @@ if runtime.bot_client is not None:
             if cat is None:
                 await event.answer("یافت نشد.", alert=True)
                 return
+            # 🕘 ثبت در «اخیراً استفاده‌شده» (پایدار)
+            await _push_json_setting(_RECENT_KEY, key, max_items=8)
+            favs = await _get_json_setting(_FAV_KEY, [])
+            star_label = "💔 حذف از موردعلاقه‌ها" if key in favs else "⭐ افزودن به موردعلاقه‌ها"
             # دکمه‌ی بازگشت در سطحِ بخش باید به گروهِ والدش برگردد
-            parent = next((g for g in GROUPS if key in g["cats"]), None)
+            parent = next((g for g in V2_GROUPS if key in g["cats"]), None)
             back_cb = _cb(f"grp:{parent['key']}") if parent else _cb("home")
             await event.edit(
                 build_category_text(cat),
-                buttons=[[Button.inline("🔙 بازگشت", back_cb), Button.inline("✖️ بستن", _cb("close"))]],
+                buttons=[
+                    [Button.inline(star_label, _cb(f"star:{key}"))],
+                    [Button.inline("🔙 بازگشت", back_cb), Button.inline("✖️ بستن", _cb("close"))],
+                ],
             )
             await event.answer()
             return
 
         await event.answer()
+
+def _search_commands(query: str):
+    """جستجوی دستورها بر اساسِ نامِ دستور/کلیدواژه در متنِ خط؛ خروجی: [(cat_key, line)]"""
+    q = query.strip().lower()
+    if not q:
+        return []
+    results = []
+    for cat in CATEGORIES:
+        for line in cat["commands"]:
+            hay = line.lower()
+            # هم نامِ دستور (بعد از نقطه) هم کلِ خط
+            if q in hay:
+                results.append((cat["key"], line))
+    return results
+
+
+@client.on(events.NewMessage(outgoing=True, pattern=pat(["پنل پیدا", "panel find"])))
+async def panel_search_handler(event):
+    """`.پنل پیدا <عبارت>` — جستجو در ۲۰۰+ دستورِ پنل."""
+    query = (event.pattern_match.group(1) or "").strip()
+    if not query:
+        return await event.edit(f"مثال: `{PREFIX}پنل پیدا یادآوری`")
+    matches = _search_commands(query)
+    if not matches:
+        return await event.edit(f"🔎 چیزی برای «{query}» پیدا نشد.")
+    await event.edit(
+        build_search_results_text(query, matches),
+        buttons=build_search_buttons(matches),
+    )
