@@ -88,8 +88,14 @@ async def ask_handler(event):
     else:
         user_content = question
 
+    # 🧠 خاطراتِ مرتبطِ حافظه‌ی هوشمند (اگر هست) به system اضافه می‌شود
+    system_prompt = _SYSTEM_PROMPT
+    memory_block = await ai.build_memory_context(question or context_text or "")
+    if memory_block:
+        system_prompt = _SYSTEM_PROMPT + "\n\n" + memory_block
+
     messages = [
-        {"role": "system", "content": _SYSTEM_PROMPT},
+        {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_content},
     ]
     await _ask_and_reply(event, messages)

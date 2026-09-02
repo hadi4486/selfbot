@@ -224,3 +224,34 @@ async def synthesize_speech(text: str, *, voice: str | None = None) -> bytes:
     if not body:
         raise AIRequestError("سرویسِ متن‌به‌صوت پاسخِ خالی برگردوند")
     return body
+
+# -------------------------------------------------- حافظه‌ی هوشمند (v2) ---
+async def build_memory_context(query: str, *, max_chars: int = 1200) -> str:
+    """
+    بلوکِ «خاطراتِ مرتبط» برای تزریق به system prompt — از ai_memory_repo.
+    فقط خاطراتِ مرتبط با query (+ همه‌ی Preferenceها) و سقف‌دار؛
+    اگر حافظه‌ای نبود رشته‌ی خالی برمی‌گردد (پرامپت تمیز می‌ماند).
+    """
+    from .repositories import ai_memory_repo
+
+    try:
+        items = await ai_memory_repo.relevant_memories(query)
+    except Exception:
+        return ""  # حافظه هرگز نباید پاسخِ AI را بشکند
+
+    if not items:
+        return ""
+
+    lines = []
+    used = 0
+    for m in items:
+        icon = ai_memory_repo.SMART_ICONS.get(m.category, "📁")
+        line = f"- {icon} [{m.category}] {m.key}: {m.value}"
+        if used + len(line) > max_chars:
+            break
+        lines.append(line)
+        used += len(line)
+
+    if not lines:
+        return ""
+    return "خاطراتِ مرتبطِ ذخیره‌شده (در صورتِ مرتبط‌بودن، در پاسخ لحاظ کن):\n" + "\n".join(lines)

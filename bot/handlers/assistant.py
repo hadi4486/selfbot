@@ -692,8 +692,16 @@ async def assistant_autoreply(event):
                         incoming_text = ""
                 incoming_text = incoming_text or "(بدون متن)"
                 hist_key = _history_key(event.chat_id, sender_id)
+                # 🧠 خاطراتِ مرتبطِ حافظه‌ی هوشمند بر اساسِ متنِ پیامِ ورودی
+                _system_prompt = _ASSISTANT_AI_SYSTEM
+                try:
+                    _memory_block = await ai.build_memory_context(incoming_text, max_chars=800)
+                except Exception:
+                    _memory_block = ""
+                if _memory_block:
+                    _system_prompt = _ASSISTANT_AI_SYSTEM + "\n\n" + _memory_block
                 messages = [
-                    {"role": "system", "content": _ASSISTANT_AI_SYSTEM},
+                    {"role": "system", "content": _system_prompt},
                     *_get_history_messages(hist_key),
                     {"role": "user", "content": incoming_text},
                 ]
