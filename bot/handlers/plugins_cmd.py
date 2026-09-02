@@ -7,11 +7,14 @@ from ..config import PREFIX
 from ..plugin_loader import (
     get_all_plugins,
     get_plugin_commands,
+    get_plugin_info,
+    get_plugin_origin,
     install_plugin_from_github,
     load_plugin,
     remove_installed_plugin,
     unload_plugin,
 )
+from ..repositories import settings_repo
 from ..runtime import client
 from ..utils import pat
 
@@ -64,10 +67,62 @@ async def plugins_handler(event):
         plugin = await load_plugin(value)
         return await event.edit("🔄 پلاگین با موفقیت Reload شد." if plugin else "❌ Reload ناموفق بود؛ خطای پلاگین را در لاگ Railway ببین.")
 
+    if action in ("اطلاعات", "info"):
+        if not value:
+            return await event.edit(f"❌ استفاده: `{PREFIX}پلاگین اطلاعات <name>`")
+        info = get_plugin_info(value)
+        if not info:
+            return await event.edit("❌ پلاگینِ فعالی با این نام نیست (لیست: `.پلاگین`).")
+        src = "نصب‌شده" if info["installed"] else "داخلی"
+        lines = [
+            f"🧩 **{info['name']}** ({src})",
+            f"📝 {info['description'] or '—'}",
+            f"⚙️ دستورها: " + (", ".join(f"`{PREFIX}{c}`" for c in info["commands"]) or "—"),
+            f"🔗 هندلرها: {info['handlers']}",
+            f"📁 مسیر: `{info['path']}`",
+        ]
+        if info["config"]:
+            lines.append("🧾 config: `" + str(info["config"])[:200] + "`")
+        return await event.edit("\n".join(lines))
+
+    if action in ("فعال", "enable"):
+        if not value:
+            return await event.edit(f"❌ استفاده: `{PREFIX}پلاگین فعال <name>`")
+        if get_all_plugins().get(value):
+            return await event.edit("ℹ️ همین الان فعاله.")
+        plugin = await load_plugin(value)
+        if plugin:
+            await settings_repo.set_setting(f"plugin_disabled_{value}", "false")
+            return await event.edit(f"✅ پلاگین `{value}` فعال شد.")
+        return await event.edit("❌ پلاگینی با این نام روی دیسک نیست.")
+
+    if action in ("غیرفعال", "disable"):
+        if not value:
+            return await event.edit(f"❌ استفاده: `{PREFIX}پلاگین غیرفعال <name>`")
+        ok = await unload_plugin(value)
+        if not ok:
+            return await event.edit("❌ پلاگینِ فعالی با این نام نیست.")
+        await settings_repo.set_setting(f"plugin_disabled_{value}", "true")
+        return await event.edit(f"⛔ پلاگین `{value}` غیرفعال شد (تا فعال‌کردنِ دوباره).")
+
+    if action in ("بروزرسانی", "update"):
+        name = value
+        origin = get_plugin_origin(name) if name else None
+        if not origin:
+            return await event.edit(
+                f"❌ استفاده: `{PREFIX}پلاگین بروزرسانی <name>`\n(فقط پلاگین‌های نصب‌شده از GitHub)"
+            )
+        await event.edit("📥 در حال بروزرسانی...")
+        ok, message, _ = await install_plugin_from_github(origin)
+        return await event.edit(("✅ " if ok else "❌ ") + message)
+
     return await event.edit(
         f"❌ دستور ناشناخته.\n\n"
         f"`{PREFIX}پلاگین` — لیست\n"
         f"`{PREFIX}پلاگین نصب <url>` — نصب\n"
         f"`{PREFIX}پلاگین حذف <name>` — حذف\n"
-        f"`{PREFIX}پلاگین reload <name>` — Reload"
+        f"`{PREFIX}پلاگین reload <name>` — Reload\n"
+        f"`{PREFIX}پلاگین اطلاعات <name>` — جزئیات\n"
+        f"`{PREFIX}پلاگین فعال/غیرفعال <name>`\n"
+        f"`{PREFIX}پلاگین بروزرسانی <name>` — نصبِ مجدد از URLِ اصلی"
     )

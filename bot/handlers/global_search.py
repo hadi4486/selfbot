@@ -20,6 +20,7 @@ from telethon.tl.types import (
     PeerUser,
 )
 
+from .. import assistant_brain
 from ..config import PREFIX
 from ..runtime import client
 from ..utils import pat
@@ -406,10 +407,13 @@ def _paginate_lines(lines: List[str], limit: int = 3500) -> List[str]:
 async def global_search_handler(event):
     """جستجو در تمام داده‌ها + خودِ تلگرام."""
     args = (event.pattern_match.group(1) or "").strip().split()
+    smart = bool(args) and args[0] in ("هوشمند", "smarter", "سمارت")
+    if smart:
+        args = args[1:]
     if not args:
         return await event.edit(
             f"🔍 **جستجوی جهانی**\n\n"
-            f"استفاده: `{PREFIX}جستجو <عبارت>`\n\n"
+            f"استفاده: `{PREFIX}جستجو <عبارت>` (یا `{PREFIX}جستجو هوشمند <عبارت>` برای 🧠 خلاصه‌ی AI)\n\n"
             f"جستجو در:\n"
             f"• یادداشت‌ها\n"
             f"• حافظه AI\n"
@@ -442,6 +446,15 @@ async def global_search_handler(event):
 
     if not results:
         return await event.edit(f"🔍 نتیجه‌ای برای `{_md_escape(query)}` یافت نشد.")
+
+    if smart:
+        blob_lines = [f"## {sec}"] + [f"- {it}" for sec, items in results.items() for it in items]
+        blob = "\n".join(blob_lines)[:6000]
+        try:
+            insight = await assistant_brain.summarize_search(query, blob)
+            return await event.edit(f"🧠 **جستجوی هوشمند: `{_md_escape(query)}`**\n\n{insight}")
+        except Exception:
+            pass  # AI در دسترس نیست → خروجیِ عادی
 
     body_lines = []
     total = 0

@@ -53,6 +53,8 @@ async def automation_handler(event):
 
     if sub in ("جدید", "new"):
         return await _create_rule(event, args[1:] if len(args) > 1 else [])
+    if sub in ("بساز", "ساخت", "natural"):
+        return await _create_rule_natural(event, (event.pattern_match.group(1) or "").strip())
     if sub in ("حذف", "delete", "rm"):
         return await _delete_rule(event, args[1:] if len(args) > 1 else [])
     if sub in ("فعال", "enable"):
@@ -140,6 +142,73 @@ async def _create_rule(event, args):
             f"📌 رویداد: {rule.event_type} → {rule.action_type}"
         )
     except Exception as e:
+        await event.edit(f"❌ خطا: {e}")
+
+
+_NATURAL_ACTIONS = {
+    "اطلاع بده": "notify",
+    "اعلان کن": "notify",
+    "پاسخ بده": "reply",
+    "جواب بده": "reply",
+    "یادداشت کن": "note",
+    "زمان‌بند کن": "schedule",
+    "زمان‌بند": "schedule",
+    "پشتیبان بگیر": "backup",
+}
+
+
+async def _create_rule_natural(event, arg: str):
+    """مترجمِ طبیعی: «وقتی پیام دریافت شد اگر شامل «فوری» بود آنگاه اطلاع بده مهمه!»"""
+    import re as _re
+
+    low = arg.replace("\u200c", " ")
+    m = _re.search(r"وقتی\s+(.+?)\s+اگر\s+(?:شامل\s+)?[«\"']?(.+?)[»\"']?\s+(?:بود|باشد|بشه)?\s*آنگاه\s+(.+)$", arg)
+    if not m:
+        return await event.edit(
+            "❌ قالبِ طبیعی:\n"
+            f"`{PREFIX}اتوماسیون بساز وقتی پیام دریافت شد اگر شامل «فوری» بود آنگاه اطلاع بده پیامِ مهم!`\n"
+            "عملیات‌ها: اطلاع بده / پاسخ بده / یادداشت کن / زمان‌بند <متن> / پشتیبان بگیر"
+        )
+    when_txt, cond_txt, then_txt = m.group(1).strip(), m.group(2).strip(), m.group(3).strip()
+
+    # رویداد
+    if "پیام" in when_txt and ("دریافت" in when_txt or "شد" in when_txt):
+        event_type = "message"
+    elif "عضو" in when_txt and ("شد" in when_txt or "اضافه" in when_txt):
+        event_type = "user_join"
+    elif "ترک" in when_txt or "خارج" in when_txt:
+        event_type = "user_leave"
+    else:
+        return await event.edit("❌ رویدادِ طبیعیِ پشتیبانی‌شده: «وقتی پیام دریافت شد» / «وقتی عضو جدید اضافه شد»")
+
+    # عملیات
+    action_type, action_value = None, ""
+    for phrase, atype in _NATURAL_ACTIONS.items():
+        if then_txt.startswith(phrase):
+            action_type = atype
+            action_value = then_txt[len(phrase):].strip()
+            break
+    if action_type is None:
+        action_type, action_value = "notify", then_txt
+
+    name = "قانونِ طبیعیِ " + cond_txt[:24]
+    try:
+        rule = await automation_repo.create_rule(
+            name=name,
+            event_type=event_type,
+            action_type=action_type,
+            action_value=action_value or "🤖 قانونِ اتوماسیون اجرا شد",
+            condition=f"{cond_txt} in message",
+        )
+        await event.edit(
+            "✅ **قانونِ طبیعی ساخته شد**\n"
+            f"📅 وقتی: {event_type}\n"
+            f"🔀 اگر: شامل «{cond_txt}»\n"
+            f"⚡ آنگاه: {action_type} → «{action_value}»\n"
+            f"🆔 شناسه: `{rule.id}`"
+        )
+    except Exception as e:
+        _record_error()
         await event.edit(f"❌ خطا: {e}")
 
 

@@ -111,7 +111,61 @@ async def stats_handler(event):
         await reset_stats()
         return await event.edit("🗑 آمار پاک شد و شمارش از نو شروع شد")
 
+    if sub in ("هوشمند", "insight", "تحلیل"):
+        return await _smart_insights(event)
+
     await event.edit(f"دستور نامعتبره. برای دیدن آمار: `{PREFIX}آمار`")
+
+
+async def _smart_insights(event):
+    """📈 تحلیلِ هوشمندِ آمار: خلاصه‌ی عددی + AI Insight (بدونِ AI: الگوهای ساده)."""
+    per_chat = STATS["per_chat"]
+    total_msgs = STATS["messages_total"]
+    total_cmds = STATS["commands_total"]
+    top_commands = sorted(STATS["commands_by_name"].items(), key=lambda kv: kv[1], reverse=True)[:3]
+    top_chats = sorted(per_chat.items(), key=lambda kv: kv[1]["messages"] + kv[1]["commands"], reverse=True)[:3]
+
+    # نرخِ دستور به پیام + فعالیت
+    cmd_rate = (total_cmds / total_msgs * 100) if total_msgs else 0
+    lines = [
+        "📈 **تحلیلِ هوشمندِ آمار**",
+        "",
+        f"📨 پیام‌ها: {total_msgs:,}  |  ⌨️ دستورها: {total_cmds:,}  (نرخ: {cmd_rate:.0f}%)",
+    ]
+    if top_commands:
+        lines.append("🏆 دستورهای محبوب: " + " • ".join(f"`{n}`×{c}" for n, c in top_commands))
+    if top_chats:
+        chat_txt = " • ".join(
+            f"{info.get('title') or cid} ({info['messages']})" for cid, info in top_chats
+        )
+        lines.append(f"💬 فعال‌ترین چت‌ها: {chat_txt}")
+
+    blob = "\n".join(lines)
+    try:
+        from .. import assistant_brain, ai as ai_mod
+
+        out = await ai_mod.ask_ai(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "آمارِ استفاده‌ی یک سلف‌بات تلگرامی را می‌بینی. به فارسی در حداکثر ۴ خط "
+                        "«🧠 تحلیلِ هوشمند» بنویس: الگوی استفاده، چت‌های فعال، و یک توصیه‌ی عملی. بدون مقدمه."
+                    ),
+                },
+                {"role": "user", "content": blob + f"\nخطاهای سیستمی: {STATS['errors']}"},
+            ],
+            max_tokens=220,
+        )
+        lines.append("")
+        lines.append(out.strip())
+    except Exception:
+        # بدونِ AI: insight محلی
+        if cmd_rate > 30:
+            lines.append("🧠 نرخِ دستورِ بالا — بیشترِ فعالیتِ اکانت اتوماتیک/ابزاری است.")
+        elif total_msgs > 0:
+            lines.append("🧠 اکانت در حالتِ گفتگوی طبیعی استفاده می‌شود.")
+    await event.edit("\n".join(lines))
 
 
 async def stats_saver():

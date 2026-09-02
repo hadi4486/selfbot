@@ -22,7 +22,7 @@ from io import BytesIO
 
 from telethon import events
 
-from .. import ai, local_speech
+from .. import ai, local_speech, runtime
 from ..config import PREFIX
 from ..runtime import client
 from ..storage.stats_store import record_error as _record_error
@@ -100,6 +100,29 @@ async def transcribe_handler(event):
 
     if not followup:
         return await msg.edit(f"📝 **رونویسی:**\n\n{text}")
+
+    # 🎙→⏰ Voice→Action: «رونویسی کار/یادآوری» — از متنِ ویس کار/یادآوریِ خودکار بساز.
+    if followup.lower() in ("کار", "task", "یادآوری", "remind", "یادم بنداز"):
+        import datetime as dt
+
+        from .. import assistant_brain
+        from ..config import TIMEZONE_OFFSET
+        from ..repositories import tasks_repo
+        from ..storage.scheduler_store import create_job
+
+        due = assistant_brain.parse_natural_time(text)
+        if due is not None and (due.tzinfo is None or due > dt.datetime.now(dt.timezone.utc)):
+            if due.tzinfo is None:
+                due = due.replace(tzinfo=dt.timezone.utc)
+            clean = assistant_brain.strip_time_phrase(text) or text
+            job = await create_job(runtime.SELF_ID or event.chat_id, f"🎙 {clean}", due, "reminder")
+            local_dt = due.replace(tzinfo=None) + dt.timedelta(hours=TIMEZONE_OFFSET)
+            return await msg.edit(
+                f"🎙 **متنِ ویس:** {text}\n\n"
+                f"🔔 یادآوریِ خودکارِ `{job.id}` ساخته شد — سرِ **{local_dt.strftime('%Y-%m-%d %H:%M')}**"
+            )
+        t = await tasks_repo.add_task(text, priority=0)
+        return await msg.edit(f"🎙 **متنِ ویس:** {text}\n\n✅ کارِ `{t['id']}` ثبت شد")
 
     # ترکیب با هسته‌ی AI: متنِ رونویسی‌شده به‌عنوانِ context به درخواستِ کاربر اضافه می‌شه.
     await msg.edit("📝 رونویسی شد؛ در حال پرسیدن از AI...")

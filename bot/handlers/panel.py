@@ -304,6 +304,9 @@ CATEGORIES = [
             f"`{PREFIX}پلاگین نصب` `<لینکِ فایلِ .py در گیت‌هاب>` — نصب و بارگذاریِ آنی، بدونِ ری‌استارت",
             f"`{PREFIX}پلاگین حذف` `<نام>` — حذفِ پلاگینِ نصب‌شده",
             f"`{PREFIX}پلاگین reload` `<نام>` — Unload/Load دوباره، بدونِ ری‌استارتِ کلِ بات",
+            f"`{PREFIX}پلاگین اطلاعات` `<نام>` — توضیح/دستورها/هندلرها/config",
+            f"`{PREFIX}پلاگین فعال/غیرفعال` `<نام>` — خاموش/روشنِ پایدار",
+            f"`{PREFIX}پلاگین بروزرسانی` `<نام>` — نصبِ مجدد از URLِ اصلی",
             "⚠️ پلاگین با سطحِ دسترسیِ خودِ اکانت اجرا می‌شه؛ فقط کدِ مطمئن نصب کن",
         ],
     },
@@ -416,6 +419,33 @@ CATEGORIES = [
             f"`{PREFIX}آمارگراف` `<تعداد روز اختیاری>` — گراف تصویریِ فعالیتِ گروه (نیازمندِ matplotlib)",
         ],
     },
+    {
+        "key": "personal",
+        "emoji": "🤖",
+        "title": "دستیارِ شخصی",
+        "commands": [
+            f"`{PREFIX}داشبورد` — نمایِ یکجای همه‌چیز",
+            f"`{PREFIX}کار` — 🔥 کارهای من (افزودن/انجام/امروز/عقب)",
+            f"`{PREFIX}یادآوری` `<متنِ طبیعی>` — «فردا ساعت ۸ جلسه برو»",
+            f"`{PREFIX}اتوپایل روشن/خاموش` — تحلیلِ خودکارِ پیام‌های خصوصی",
+            f"`{PREFIX}اینباکس پاسخ` / `{PREFIX}اینباکس خلاصه`",
+            f"`{PREFIX}XP` — 🎮 لِول و دستاوردها",
+            f"`{PREFIX}سبک رسمی/دوستانه/کوتاه/طنز/حرفه‌ای` — سبکِ پیش‌فرضِ `.جواب`",
+            f"`{PREFIX}تحلیل خطا/کد/جدول` — روی عکسِ ریپلای‌شده",
+        ],
+    },
+    {
+        "key": "security",
+        "emoji": "🛡",
+        "title": "امنیت و پشتیبان",
+        "commands": [
+            f"`{PREFIX}امنیت` — 🛡 SECURITY CENTER",
+            f"`{PREFIX}سلامت` — وضعیت workerها و سرویس‌ها",
+            f"`{PREFIX}نشست‌ها` — نشست‌های فعال (خروجِ اجباری: `خروج <hash>`)",
+            f"`{PREFIX}پشتیبان تنظیمات` — بکاپ کامل (حافظه/کارها/زمان‌بندی)",
+            f"`{PREFIX}بازیابی` — با ریپلای روی فایلِ بکاپ",
+        ],
+    },
 ]
 
 _CATEGORY_BY_KEY = {c["key"]: c for c in CATEGORIES}
@@ -446,7 +476,10 @@ def build_home_buttons():
             row = []
     if row:
         rows.append(row)
-    rows.append([Button.inline("✖️ بستن پنل", _cb("close"))])
+    rows.append([
+        Button.inline("📊 داشبورد", _cb("dash")),
+        Button.inline("✖️ بستن پنل", _cb("close")),
+    ])
     return rows
 
 
@@ -565,6 +598,10 @@ if runtime.bot_client is not None:
         if action == "home":
             await event.edit(build_home_text(), buttons=build_home_buttons())
             await event.answer()
+            return
+
+        if action == "dash":
+            await event.answer("📊 `.داشبورد` را با اکانت خودت بفرست", alert=True)
             return
 
         if action == "close":

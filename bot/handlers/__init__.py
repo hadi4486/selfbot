@@ -55,4 +55,7 @@ from . import (
 from . import (
     tasks,
     autopilot,
+    dashboard,
+    security,
+    gamification,
 )

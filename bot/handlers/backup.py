@@ -1,4 +1,5 @@
 """۱۰) بکاپ‌گیری: پیام‌ها (متن/JSON)، رسانه‌ها، لیست چت‌ها، و کل تنظیمات بات"""
+import datetime as dt
 import json
 import logging
 from datetime import datetime, timezone
@@ -126,6 +127,10 @@ async def _gather_config_snapshot():
         },
         "global_toggles": dict(_global_toggles),
         "stats": dict(STATS),
+        # ---- دستیار شخصی (v10) ----
+        "ai_memory": await _snapshot_ai_memory(),
+        "tasks": await _snapshot_tasks(),
+        "schedules": await _snapshot_schedules(),
     }
 
 
@@ -312,6 +317,59 @@ async def _apply_config_snapshot(data):
                     continue
         applied.append("سوییچ‌های سراسری")
 
+    # ---- دستیار شخصی (v10): حافظه AI / کارها / زمان‌بندی‌ها ----
+    if isinstance(data.get("ai_memory"), list):
+        from ..repositories import ai_memory_repo
+
+        restored = 0
+        for it in data["ai_memory"]:
+            try:
+                await ai_memory_repo.save_memory(
+                    str(it.get("category", ""))[:32],
+                    str(it.get("key", ""))[:128],
+                    str(it.get("value", "")),
+                )
+                restored += 1
+            except Exception:
+                continue
+        if restored:
+            applied.append(f"حافظه‌ی AI ({restored})")
+
+    if isinstance(data.get("tasks"), list):
+        from ..repositories import tasks_repo
+
+        restored = 0
+        for it in data["tasks"]:
+            try:
+                due = it.get("due_at")
+                if isinstance(due, str) and due:
+                    due = dt.datetime.fromisoformat(due)
+                else:
+                    due = None
+                await tasks_repo.add_task(str(it.get("text", "")), due_at=due, priority=int(it.get("priority") or 0))
+                restored += 1
+            except Exception:
+                continue
+        if restored:
+            applied.append(f"کارها ({restored})")
+
+    if isinstance(data.get("schedules"), list):
+        from ..storage.scheduler_store import create_job
+
+        restored = 0
+        for it in data["schedules"]:
+            try:
+                run_at = dt.datetime.fromisoformat(it["run_at"])
+                if run_at.tzinfo is None:
+                    run_at = run_at.replace(tzinfo=dt.timezone.utc)
+                if run_at > dt.datetime.now(dt.timezone.utc):
+                    await create_job(int(it["chat_id"]), str(it["text"]), run_at, str(it.get("kind", "reminder")))
+                    restored += 1
+            except Exception:
+                continue
+        if restored:
+            applied.append(f"زمان‌بندی‌ها ({restored})")
+
     return applied
 
 
@@ -336,6 +394,43 @@ async def send_settings_backup(caption_note: str = "") -> None:
 
 
 @client.on(events.NewMessage(outgoing=True, pattern=pat(["پشتیبان", "backup"])))
+
+
+async def _snapshot_ai_memory() -> list:
+    from ..db.models_ext import AIMemory
+    from sqlalchemy import select
+    from ..db.engine import session_scope
+
+    async with session_scope() as session:
+        rows = (await session.execute(select(AIMemory))).scalars().all()
+        return [
+            {"category": r.category, "key": r.key, "value": r.value} for r in rows
+        ]
+
+
+async def _snapshot_tasks() -> list:
+    from ..repositories import tasks_repo
+
+    return await tasks_repo.list_tasks(done=False, limit=500) + await tasks_repo.list_tasks(done=True, limit=500)
+
+
+async def _snapshot_schedules() -> list:
+    from ..storage.scheduler_store import list_jobs
+
+    out = []
+    for kind in ("schedule", "reminder"):
+        for j in await list_jobs(kind):
+            out.append(
+                {
+                    "kind": kind,
+                    "chat_id": j.chat_id,
+                    "text": j.text,
+                    "run_at": j.run_at.isoformat() if j.run_at else None,
+                }
+            )
+    return out
+
+
 async def backup_handler(event):
     args = (event.pattern_match.group(1) or "").strip()
     parts = args.split(None, 1)

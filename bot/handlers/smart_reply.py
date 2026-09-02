@@ -21,14 +21,24 @@ MODES = {
     "دوستانه": "پاسخ دوستانه و گرم، مثل یک رفیق صمیمی",
     "طنز": "پاسخ طنزآمیز و شوخ، با کمی شوخی",
     "کوتاه": "پاسخ بسیار کوتاه و مستقیم، حداکثر ۲ جمله",
+    "حرفه‌ای": "پاسخ حرفه‌ایِ کاری: شفاف، مودبانه، با تمرکز بر نتیجه و گامِ بعدی",
 }
+
+DEFAULT_STYLE_KEY = "smart_reply_style"
+
+
+async def _get_default_style() -> str:
+    from ..repositories import settings_repo
+
+    val = await settings_repo.get_setting(DEFAULT_STYLE_KEY)
+    return val or "دوستانه"
 
 
 @client.on(events.NewMessage(outgoing=True, pattern=pat(["جواب", "reply"])))
 async def smart_reply_handler(event):
     """پیشنهاد پاسخ هوشمند برای یک پیام."""
     args = (event.pattern_match.group(1) or "").strip().split()
-    mode = args[0] if args else "دوستانه"
+    mode = args[0] if args else await _get_default_style()
 
     # بررسی حالت ارسال
     if mode in ("ارسال", "send"):
@@ -62,18 +72,46 @@ async def smart_reply_handler(event):
             "برای فعال‌سازی، متغیر `AI_API_KEY` را تنظیم کنید."
         )
 
-    # ساخت پرامپت
+    # ساخت پرامپت — با کانتکستِ چند پیامِ آخرِ چت + حافظه‌ی مرتبط
     mode_desc = MODES.get(mode, MODES["دوستانه"])
     text = reply.text or "[پیام بدون متن]"
     sender = reply.sender_id or "کاربر ناشناس"
 
+    context_bits: list[str] = []
+    try:
+        history = await event.client.get_messages(
+            event.chat_id, limit=6, max_id=reply.id, min_id=max(reply.id - 60, 0)
+        )
+        prev_lines = []
+        for m in reversed(list(history)):
+            t = (m.raw_text or "").strip()
+            if t:
+                who = "من" if m.out else "طرف"
+                prev_lines.append(f"- {who}: {t[:160]}")
+        if prev_lines:
+            context_bits.append("پیام‌های قبلیِ گفتگو:\n" + "\n".join(prev_lines[-6:]))
+    except Exception:
+        pass
+
+    try:
+        from .. import assistant_brain
+
+        mem = await ai.build_memory_context(text)
+        if mem:
+            context_bits.append("خاطراتِ مرتبط:\n" + mem)
+    except Exception:
+        pass
+
+    system_prompt = (
+        "تو یک دستیار هوشمند هستی که به پیام‌ها پاسخ می‌دهی.\n"
+        f"سبک پاسخ: {mode_desc}\n"
+        f"پیام اصلی از طرف کاربر {sender} آمده است.\n"
+        "پاسخ باید فارسی باشد و دقیقاً به محتوای پیام بپردازد.\n"
+        + ("\n".join(context_bits) + "\n" if context_bits else "")
+    )
+
     messages = [
-        {"role": "system", "content": f"""
-تو یک دستیار هوشمند هستی که به پیام‌ها پاسخ می‌دهی.
-سبک پاسخ: {mode_desc}
-پیام اصلی از طرف کاربر {sender} آمده است.
-پاسخ باید فارسی باشد و دقیقاً به محتوای پیام بپردازد.
-""" },
+        {"role": "system", "content": system_prompt},
         {"role": "user", "content": f"پیام: {text}\n\nلطفاً پاسخ بده."},
     ]
 
@@ -143,3 +181,22 @@ async def _send_reply(event, args):
         await event.edit("✅ پاسخ ارسال شد.")
     except Exception as e:
         await event.edit(f"❌ خطا در ارسال پاسخ: {e}")
+
+@client.on(events.NewMessage(outgoing=True, pattern=pat(["سبک", "style"])))
+async def style_handler(event):
+    """`.سبک` — سبکِ فعلی؛ `.سبک <نام>` — ذخیره‌ی سبکِ پیش‌فرض برای `.جواب`."""
+    from ..repositories import settings_repo
+
+    arg = (event.pattern_match.group(1) or "").strip()
+    if not arg:
+        current = await _get_default_style()
+        return await event.edit(
+            "🎨 **سبکِ پاسخ**\n\n"
+            f"سبکِ فعلی: **{current}**\n"
+            f"حالت‌ها: {', '.join(MODES.keys())}\n"
+            f"ذخیره: `{PREFIX}سبک رسمی` (یا هر سبکِ دیگه)"
+        )
+    if arg not in MODES:
+        return await event.edit(f"❌ حالت نامعتبر. حالت‌ها: {', '.join(MODES.keys())}")
+    await settings_repo.set_setting(DEFAULT_STYLE_KEY, arg)
+    await event.edit(f"✅ سبکِ پیش‌فرضِ `.جواب` روی **{arg}** ذخیره شد")

@@ -156,11 +156,34 @@ async def load_plugin(name: str) -> Optional[Plugin]:
 
 async def load_all_plugins() -> Dict[str, Plugin]:
     result = {}
+    disabled = await _disabled_plugin_names()
     for name in discover_plugins():
+        if name in disabled:
+            logger.info("Plugin %s is disabled (settings) — skip", name)
+            continue
         plugin = await load_plugin(name)
         if plugin:
             result[name] = plugin
     return result
+
+
+async def _disabled_plugin_names() -> set:
+    """نامِ پلاگین‌هایی که با `.پلاگین غیرفعال` خاموش شده‌اند (پایدار در settings)."""
+    try:
+        from .db.engine import session_scope
+        from .db.models import Setting
+        from sqlalchemy import select
+
+        async with session_scope() as session:
+            rows = (
+                await session.execute(
+                    select(Setting).where(Setting.key.like("plugin_disabled_%"))
+                )
+            ).scalars().all()
+            return {r.key.removeprefix("plugin_disabled_") for r in rows if r.value == "true"}
+    except Exception:
+        logger.debug("Could not load disabled plugins", exc_info=True)
+        return set()
 
 
 async def unload_plugin(name: str) -> bool:
@@ -279,6 +302,22 @@ async def install_plugin_from_github(url: str) -> Tuple[bool, str, Optional[Plug
         return False, "پلاگین دانلود شد ولی هنگام Load خطا داد؛ نصب برگردانده شد.", None
     backup.unlink(missing_ok=True)
 
+    # origin را برای `.پلاگین بروزرسانی` نگه می‌داریم (پایدار در دیسک).
+    try:
+        import json as _json
+        meta_path = PLUGIN_INSTALL_DIR / "metadata.json"
+        meta = {}
+        if meta_path.exists():
+            try:
+                meta = _json.loads(meta_path.read_text(encoding="utf-8"))
+            except Exception:
+                meta = {}
+        meta.setdefault(name, {})["origin_url"] = raw_url
+        meta[name]["updated_at"] = str(int(__import__("time").time()))
+        meta_path.write_text(_json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        logger.debug("Could not write plugin metadata", exc_info=True)
+
     digest = hashlib.sha256(data).hexdigest()[:12]
     logger.info("Installed plugin %s sha256=%s content-type=%s", name, digest, content_type)
     return True, f"پلاگین `{name}` نصب شد. SHA256: `{digest}`", plugin
@@ -294,3 +333,33 @@ def get_all_plugins() -> Dict[str, Plugin]:
 
 def get_plugin_commands() -> Dict[str, List[str]]:
     return {name: plugin.commands for name, plugin in _loaded_plugins.items() if plugin.commands}
+
+# ------------------------------------------------------------ marketplace ---
+def get_plugin_origin(name: str) -> Optional[str]:
+    """URL اصلیِ نصبِ پلاگین (برای بروزرسانی) از metadata.json."""
+    import json
+    meta_path = PLUGIN_INSTALL_DIR / "metadata.json"
+    if not meta_path.exists():
+        return None
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        return (meta.get(name) or {}).get("origin_url")
+    except Exception:
+        return None
+
+
+def get_plugin_info(name: str) -> Optional[dict]:
+    """اطلاعاتِ یک پلاگین: نام/منبع/دستورها/هندلرها/config/مسیر."""
+    plugin = _loaded_plugins.get(name)
+    if not plugin:
+        return None
+    doc = (plugin.module.__doc__ or "").strip()
+    return {
+        "name": plugin.name,
+        "installed": plugin.installed,
+        "path": str(plugin.path),
+        "commands": list(plugin.commands or []),
+        "handlers": len(plugin.handlers or []),
+        "config": dict(plugin.config or {}),
+        "description": doc.splitlines()[0] if doc else "",
+    }

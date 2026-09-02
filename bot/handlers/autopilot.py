@@ -36,6 +36,38 @@ _MIN_GAP_SECONDS = 20  # حداقل فاصله‌ی بین triageها (کنتر�
 _triage_lock = asyncio.Lock()
 _last_triage_at = 0.0
 
+IGNORE_KEY = "autopilot_ignored_chats"
+
+
+async def _ignored_chats() -> set:
+    """چت‌های مستثنی (`.اتوپایل مستثنی`) — پایدار در settings."""
+    from ..repositories import settings_repo
+
+    val = await settings_repo.get_setting(IGNORE_KEY)
+    if not val:
+        return set()
+    out = set()
+    for part in val.split(","):
+        part = part.strip()
+        if part.lstrip("-").isdigit():
+            out.add(int(part))
+    return out
+
+
+async def _toggle_ignore(chat_id: int) -> bool:
+    """toggleِ چتِ جاری؛ خروجی = حالتِ جدید (True یعنی مستثنی شد)."""
+    from ..repositories import settings_repo
+
+    chats = await _ignored_chats()
+    if chat_id in chats:
+        chats.discard(chat_id)
+        state = False
+    else:
+        chats.add(chat_id)
+        state = True
+    await settings_repo.set_setting(IGNORE_KEY, ",".join(str(c) for c in sorted(chats)))
+    return state
+
 
 def _local_display(run_at_utc: dt.datetime) -> str:
     naive = run_at_utc.replace(tzinfo=None) if run_at_utc.tzinfo else run_at_utc
@@ -65,6 +97,12 @@ async def _handle_private(event):
         return
     sender = await event.get_sender()
     if sender and getattr(sender, "is_self", False):
+        return
+    # پیام‌های بات‌ها (مثل پیام‌های هوش مصنوعی/پنل) را تحلیل نکن — وگرنه هر
+    # اعلانِ خودکارِ ما (پر از کلمه‌های «مهم/یادآوری/جلسه») خودش ترییژ می‌شود.
+    if sender and getattr(sender, "bot", False):
+        return
+    if event.chat_id in await _ignored_chats():
         return
     text = (event.raw_text or "").strip()
     if not text:
@@ -97,10 +135,11 @@ async def _handle_private(event):
             tags="autopilot",
             note=result.get("reason", ""),
         )
+        preview = text if len(text) <= 120 else text[:120] + "…"
         if priority == 2:
-            lines.append("🔴 پیامِ مهم — به اینباکس (مهم) اضافه شد")
+            lines.append(f"🔴 پیامِ مهم — به اینباکس (مهم) اضافه شد\n> {preview}")
         elif needs_reply:
-            lines.append("🟡 نیازمندِ پاسخ — به اینباکس اضافه شد")
+            lines.append(f"🟡 نیازمندِ پاسخ — به اینباکس اضافه شد\n> {preview}")
 
     due_iso = (event_ or {}).get("due_at")
     if due_iso:
@@ -146,10 +185,17 @@ async def autopilot_cmd(event):
     if sub in ("خاموش", "off", "0"):
         await set_toggle("autopilot_enabled", False)
         return await event.edit("🤖 اتوپایلوت **خاموش** شد")
+    if sub in ("مستثنی", "ignore"):
+        state = await _toggle_ignore(event.chat_id)
+        return await event.edit(
+            "🚫 این چت از تحلیلِ اتوپایلوت **مستثنی** شد" if state
+            else "✅ این چت دوباره واردِ تحلیلِ اتوپایلوت شد"
+        )
     state = "🟢 روشن" if toggles.get("autopilot_enabled", False) else "🔴 خاموش"
     await event.edit(
         f"🤖 **اتوپایلوت**\nوضعیت: {state}\n\n"
-        f"`{PREFIX}اتوپایل روشن` / `{PREFIX}اتوپایل خاموش`\n\n"
+        f"`{PREFIX}اتوپایل روشن` / `{PREFIX}اتوپایل خاموش`\n"
+        f"`{PREFIX}اتوپایل مستثنی` — بی‌خیالِ این چت (toggle)\n\n"
         "وقتی روشن است، پیام‌های خصوصی تحلیل می‌شوند:\n"
         "🔴 مهم → اینباکس (مهم)\n🟡 نیازمند پاسخ → اینباکس\n"
         "🔔 قرار/جلسه → یادآوریِ خودکار"

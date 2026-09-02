@@ -295,3 +295,68 @@ async def dict_handler(event):
     if not translation or "MYMEMORY WARNING" in translation:
         return await event.edit(f"معنیِ «{word}» پیدا نشد")
     await event.edit(f"📖 **{word}** = {translation}")
+
+# ====================================================== تحلیل هوشمند (Vision) ===
+_VISION_PRESETS = {
+    "خطا": "این اسکرین‌شاتِ یک خطاست. به فارسی تحلیل کن: ❌ خطای اصلی، 🔧 علتِ احتمالی، ✅ راه‌حلِ گام‌به‌گام. کوتاه و دقیق.",
+    "error": "این اسکرین‌شاتِ یک خطاست. به فارسی تحلیل کن: ❌ خطای اصلی، 🔧 علتِ احتمالی، ✅ راه‌حلِ گام‌به‌گام. کوتاه و دقیق.",
+    "کد": "کدِ داخلِ این تصویر را کامل استخراج کن (بلوکِ کد)، بعد در یک جمله بگو چه می‌کند و اگر باگ دارد ذکر کن.",
+    "code": "کدِ داخلِ این تصویر را کامل استخراج کن (بلوکِ کد)، بعد در یک جمله بگو چه می‌کند و اگر باگ دارد ذکر کن.",
+    "جدول": "جدولِ این تصویر را استخراج و به‌صورتِ لیستِ ساختاریافته (ردیف به ردیف) بازنویسی کن.",
+    "table": "جدولِ این تصویر را استخراج و به‌صورتِ لیستِ ساختاریافته (ردیف به ردیف) بازنویسی کن.",
+    "نمودار": "این نمودار را تحلیل کن: نوع، محورها، مقادیرِ کلیدی، و نتیجه‌گیریِ اصلی در دو خط.",
+    "chart": "این نمودار را تحلیل کن: نوع، محورها، مقادیرِ کلیدی، و نتیجه‌گیریِ اصلی در دو خط.",
+}
+
+
+@client.on(events.NewMessage(outgoing=True, pattern=pat(["تحلیل", "analyze"])))
+async def smart_vision_handler(event):
+    """`.تحلیل خطا/کد/جدول/نمودار` روی عکسِ ریپلای‌شده (یا توصیفِ عمومی)."""
+    arg = (event.pattern_match.group(1) or "").strip()
+    parts = arg.split(maxsplit=1)
+    sub = parts[0] if parts else ""
+    extra = parts[1].strip() if len(parts) > 1 else ""
+
+    if not event.is_reply:
+        return await event.edit(
+            "🖼 **تحلیلِ هوشمندِ تصویر**\n\n"
+            f"روی یه عکس ریپلای کن:\n"
+            f"`{PREFIX}تحلیل خطا` — اسکرین‌شاتِ خطا → علت + راه‌حل\n"
+            f"`{PREFIX}تحلیل کد` — استخراجِ کد از تصویر\n"
+            f"`{PREFIX}تحلیل جدول` — بازنویسیِ جدول\n"
+            f"`{PREFIX}تحلیل نمودار` — تفسیرِ نمودار\n"
+            f"`{PREFIX}تحلیل <سوال>` — سوالِ آزاد"
+        )
+
+    preset = _VISION_PRESETS.get(sub)
+    question = (preset + ("\nسوالِ اضافه: " + extra if extra else "")) if preset else (arg or "این تصویر رو با جزئیات توصیف کن.")
+    reply = await event.get_reply_message()
+    if not reply.media or type(reply.media).__name__ != "MessageMediaPhoto":
+        return await event.edit("❌ پیامِ ریپلای‌شده عکس نیست.")
+    await event.edit("👁 در حال تحلیلِ تصویر...")
+    try:
+        data = await reply.download_media(bytes)
+    except Exception as e:
+        _record_error()
+        return await event.edit(f"❌ خطا در دانلودِ عکس: {e}")
+    import base64
+
+    b64 = base64.b64encode(data).decode()
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": question},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+            ],
+        }
+    ]
+    try:
+        answer = await ai.ask_ai(messages, max_tokens=config.AI_MAX_TOKENS)
+    except ai.AIDisabledError:
+        return await event.edit("⚠️ برای `.تحلیل` باید `AI_API_KEY` با مدلِ Vision تنظیم شده باشه.")
+    except ai.AIRequestError as e:
+        _record_error()
+        return await event.edit(f"❌ خطا در تحلیلِ تصویر: {e}")
+    tagged, entities = ai.tag_ai_text(f"🖼 {answer}")
+    await event.edit(tagged, formatting_entities=entities)
