@@ -451,7 +451,55 @@ CATEGORIES = [
     },
 ]
 
-_CATEGORY_BY_KEY = {c["key"]: c for c in CATEGORIES}
+# ============================ گروه‌بندیِ سه‌سطحی (صفحه‌ی اول خلوت) ====
+GROUPS = [
+    {
+        "key": "g_assistant",
+        "emoji": "🤖",
+        "title": "دستیارِ شخصی",
+        "cats": ["personal", "assistant", "inbox", "ai_memory", "global_search", "smart_reply"],
+    },
+    {
+        "key": "g_automation",
+        "emoji": "⚡",
+        "title": "اتوماسیون و زمان",
+        "cats": ["scheduler", "automation", "notifications", "autopost", "daily_digest", "message_tracker"],
+    },
+    {
+        "key": "g_tools",
+        "emoji": "🛠",
+        "title": "ابزار و هوش مصنوعی",
+        "cats": ["tools", "ai", "command_router", "media", "audio"],
+    },
+    {
+        "key": "g_group",
+        "emoji": "👮",
+        "title": "گروه و کاربران",
+        "cats": ["admin", "profile", "notes", "poll", "msg"],
+    },
+    {
+        "key": "g_fun",
+        "emoji": "🎉",
+        "title": "سرگرمی و ظاهر",
+        "cats": ["fun", "font", "general"],
+    },
+    {
+        "key": "g_system",
+        "emoji": "🛡",
+        "title": "سیستم و پشتیبان",
+        "cats": ["backup", "security", "health", "settings_center", "plugins_cmd", "stats"],
+    },
+]
+
+_CATEGORY_BY_KEY = {cat["key"]: cat for cat in CATEGORIES}
+_GROUP_BY_KEY = {g["key"]: g for g in GROUPS}
+
+# اعتبارسنجی: هر cat باید دقیقاً در یک گروه باشد (در import-time چک می‌شود تا
+# اضافه‌شدنِ دسته‌ی جدیدِ فراموش‌شده همان‌جا معلوم شود).
+_assigned = [k for g in GROUPS for k in g["cats"]]
+assert len(_assigned) == len(set(_assigned)), "دسته‌ی تکراری در GROUPS!"
+_missing = set(_CATEGORY_BY_KEY) - set(_assigned)
+assert not _missing, f"دسته‌های بی‌گروه: {_missing}"
 
 
 def _divider():
@@ -461,10 +509,11 @@ def _divider():
 def build_home_text():
     total_commands = sum(len(c["commands"]) for c in CATEGORIES)
     return (
-        "👑 **پـنـل مـدیـریـت سـلـف‌بـات** 👑\n"
+        "👑 **پـنـل مـدیـریت سـلـف‌بـات** 👑\n"
         f"{_divider()}\n"
-        f"📂 **{len(CATEGORIES)}** بخش   •   ⚙️ **{total_commands}** دستور   •   🔡 پیشوند `{PREFIX}`\n\n"
-        "یک بخش رو از دکمه‌های زیر انتخاب کن تا قابلیت‌ها و دستوراتش نمایش داده بشه. ✨\n"
+        f"🗂 **{len(GROUPS)}** گروه   •   📂 **{len(CATEGORIES)}** بخش   •   ⚙️ **{total_commands}** دستور\n"
+        f"🔡 پیشوند: `{PREFIX}`\n\n"
+        "یک گروه رو باز کن، بعد بخشِ موردنظر رو انتخاب کن.\n"
         "⚠️ دستورها رو با اکانت خودت (نه این ربات) توی چت مقصد بفرست."
     )
 
@@ -472,8 +521,9 @@ def build_home_text():
 def build_home_buttons():
     rows = []
     row = []
-    for cat in CATEGORIES:
-        row.append(Button.inline(f"{cat['emoji']} {cat['title']}", _cb(f"cat:{cat['key']}")))
+    for g in GROUPS:
+        n_cmds = sum(len(_CATEGORY_BY_KEY[k]["commands"]) for k in g["cats"])
+        row.append(Button.inline(f"{g['emoji']} {g['title']} ({n_cmds})", _cb(f"grp:{g['key']}")))
         if len(row) == 2:
             rows.append(row)
             row = []
@@ -486,10 +536,41 @@ def build_home_buttons():
     return rows
 
 
+def build_group_text(group):
+    lines = [f"{group['emoji']} **گروهِ {group['title']}**", _divider(), ""]
+    for key in group["cats"]:
+        cat = _CATEGORY_BY_KEY[key]
+        lines.append(f"{cat['emoji']} **{cat['title']}** — {len(cat['commands'])} دستور")
+    lines += ["", _divider(), "یکی از بخش‌ها رو از دکمه‌های پایین باز کن."]
+    return "\n".join(lines)
+
+
+def build_group_buttons(group):
+    rows = []
+    row = []
+    for key in group["cats"]:
+        cat = _CATEGORY_BY_KEY[key]
+        row.append(Button.inline(f"{cat['emoji']} {cat['title']}", _cb(f"cat:{key}")))
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([Button.inline("🔙 بازگشت", _cb("home")), Button.inline("✖️ بستن", _cb("close"))])
+    return rows
+
+
 def build_category_text(cat):
-    body = "\n".join(f"› {line}" for line in cat["commands"])
+    # دستورها (شامل {PREFIX}) با ›، نکته‌ها/توضیح‌های آزاد با 〰 متمایز می‌شوند.
+    lines = []
+    for line in cat["commands"]:
+        if f"`{PREFIX}" in line or line.startswith("`"):
+            lines.append(f"› {line}")
+        else:
+            lines.append(f"ℹ️ {line}")
+    body = "\n".join(lines)
     return (
-        f"{cat['emoji']} **{cat['title']}**\n"
+        f"{cat['emoji']} **{cat['title']}**  ({len(cat['commands'])} مورد)\n"
         f"{_divider()}\n\n"
         f"{body}\n\n"
         f"{_divider()}\n"
@@ -582,7 +663,7 @@ if runtime.bot_client is not None:
         builder = event.builder
         result = builder.article(
             title="👑 باز کردن پنل مدیریت",
-            description=f"{len(CATEGORIES)} بخش را همین‌جا نمایش بده",
+            description=f"{len(GROUPS)} گروه / {len(CATEGORIES)} بخش را همین‌جا نمایش بده",
             text=build_home_text(),
             buttons=build_home_buttons(),
         )
@@ -631,13 +712,29 @@ if runtime.bot_client is not None:
             await event.answer()
             return
 
+        if action.startswith("grp:"):
+            gkey = action[len("grp:"):]
+            group = _GROUP_BY_KEY.get(gkey)
+            if group is None:
+                await event.answer("یافت نشد.", alert=True)
+                return
+            await event.edit(build_group_text(group), buttons=build_group_buttons(group))
+            await event.answer()
+            return
+
         if action.startswith("cat:"):
             key = action[len("cat:"):]
             cat = _CATEGORY_BY_KEY.get(key)
             if cat is None:
                 await event.answer("یافت نشد.", alert=True)
                 return
-            await event.edit(build_category_text(cat), buttons=build_category_buttons())
+            # دکمه‌ی بازگشت در سطحِ بخش باید به گروهِ والدش برگردد
+            parent = next((g for g in GROUPS if key in g["cats"]), None)
+            back_cb = _cb(f"grp:{parent['key']}") if parent else _cb("home")
+            await event.edit(
+                build_category_text(cat),
+                buttons=[[Button.inline("🔙 بازگشت", back_cb), Button.inline("✖️ بستن", _cb("close"))]],
+            )
             await event.answer()
             return
 
