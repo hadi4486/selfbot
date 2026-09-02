@@ -50,3 +50,9 @@ from . import (
     extras,
     escape,
 )
+
+# هندلرهای دستیار شخصی (v10)
+from . import (
+    tasks,
+    autopilot,
+)

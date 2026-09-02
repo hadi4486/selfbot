@@ -17,6 +17,7 @@ import re
 from telethon import errors, events
 
 from .. import runtime
+from .. import assistant_brain
 from ..config import PREFIX, TIMEZONE_OFFSET
 from ..runtime import client
 from ..storage.scheduler_store import create_job, delete_job, get_job, list_due_jobs, list_jobs
@@ -132,6 +133,20 @@ async def _add_job(event, kind: str, arg: str, dest_chat_id: int, label: str):
 
     parsed = parse_time(time_raw)
     if parsed is None:
+        # 🧠 یادآوریِ طبیعی: «فردا ساعت ۸ ...» / «۲ ساعت دیگه ...» — کلِ آرگومان را
+        # با مغزِ دستیار parse می‌کنیم (زمان + متن با هم در یک جمله).
+        natural = assistant_brain.parse_natural_time(arg)
+        if natural is not None and natural > dt.datetime.now(dt.timezone.utc):
+            natural = natural.replace(tzinfo=dt.timezone.utc)
+            text_n = assistant_brain.strip_time_phrase(arg)
+            job = await create_job(dest_chat_id, text_n or text, natural, kind)
+            local_display = (natural.replace(tzinfo=None) + dt.timedelta(hours=TIMEZONE_OFFSET)).strftime(
+                "%Y-%m-%d %H:%M"
+            )
+            return await event.edit(
+                f"✅ ثبت شد (شناسه `{job.id}`) — سرِ **{local_display}** ارسال می‌شه\n"
+                f"🧠 تشخیصِ زمانِ طبیعی: «{text_n or text}»"
+            )
         return await event.edit(f"⏰ زمانِ نامعتبر یا گذشته.\n\n{_TIME_HELP}")
     run_at_utc, local_display = parsed
 

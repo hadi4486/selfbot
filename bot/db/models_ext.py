@@ -419,3 +419,29 @@ class EscapeDaily(Base):
     updated_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
+
+
+# ---------------------------------------------------------- Tasks ---
+class TaskItem(Base):
+    """کارِ شخصی (Task Manager): `.کار` - با ددلاینِ اختیاری."""
+
+    __tablename__ = "task_items"
+    __table_args__ = (
+        Index("ix_task_items_done", "done"),
+        Index("ix_task_items_due_at", "due_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    done: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # 0 عادی / 1 مهم
+    due_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+# ------------------------------------------ Smart Inbox categories ---
+# به InboxItem ستونِ needs_reply اضافه نمی‌کنیم (مایگریشنِ سنگین)؛ دسته‌بندیِ
+# «نیازمند پاسخ» از روی priority + textِ ذخیره‌شده موقعِ triage به priority
+# نگاشت می‌شود: 2=مهم 1=نیاز به پاسخ 0=عادی.

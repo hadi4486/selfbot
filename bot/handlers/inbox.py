@@ -10,6 +10,7 @@ from telethon.tl.types import Message
 from ..config import PREFIX
 from ..runtime import client
 from ..utils import pat
+from .. import assistant_brain
 from ..repositories import inbox_repo
 
 logger = logging.getLogger("selfbot.handlers.inbox")
@@ -20,6 +21,11 @@ async def inbox_handler(event):
     """نمایش محتویات صندوق ورودی."""
     args = (event.pattern_match.group(1) or "").strip().split()
     sub = args[0].lower() if args else ""
+
+    if sub in ("هوشمند", "خلاصه", "summary"):
+        return await _smart_summary(event)
+    if sub in ("پاسخ", "reply"):
+        return await _needs_reply(event)
 
     if sub in ("مهم", "important"):
         items = await inbox_repo.get_items(importance=1, limit=20)
@@ -120,3 +126,42 @@ async def save_handler(event):
     except Exception as e:
         logger.exception("خطا در ذخیره پیام")
         await event.edit(f"❌ خطا: {e}")
+
+async def _needs_reply(event):
+    """آیتم‌هایی که تریاژِ اتوپایلوت نیاز به پاسخ برایشان ثبت کرده (tags=autopilot, importance=1)."""
+    items = await inbox_repo.get_items(importance=1, limit=30)
+    items = [i for i in items if (i.tags or "") == "autopilot" or "پاسخ" in (i.note or "")]
+    if not items:
+        return await event.edit("🟡 هیچ پیامی منتظرِ پاسخ نیست.")
+    lines = ["🟡 **نیازمندِ پاسخ**", ""]
+    for it in items[:15]:
+        who = it.sender_name or "؟"
+        preview = it.text[:60].replace("\n", " ")
+        lines.append(f"• `{it.id}` {who}: {preview}")
+    lines.append(f"\n_برای حذف: `{PREFIX}اینباکس پاک <id>`_")
+    await event.edit("\n".join(lines))
+
+
+async def _smart_summary(event):
+    """🧠 خلاصه‌ی هوشمندِ اینباکس با AI (بدونِ AI: شمارشِ ساده)."""
+    items = await inbox_repo.get_items(limit=30)
+    if not items:
+        return await event.edit("📥 اینباکس خالی است — چیزی برای خلاصه‌کردن نیست.")
+    blob = "\n".join(
+        f"[{i+1}] {it.sender_name or '؟'}: {it.text[:300]}" for i, it in enumerate(items[:20])
+    )
+    try:
+        out = await assistant_brain.summarize_inbox(blob)
+        await event.edit(f"🧠 **خلاصه‌ی هوشمندِ اینباکس**\n\n{out}")
+    except Exception:
+        # بدونِ AI: خلاصه‌ی آماری
+        n = len(items)
+        imp = sum(1 for it in items if it.importance >= 1)
+        senders = {}
+        for it in items:
+            senders[it.sender_name or "؟"] = senders.get(it.sender_name or "؟", 0) + 1
+        top = sorted(senders.items(), key=lambda kv: -kv[1])[:3]
+        await event.edit(
+            f"🧠 **خلاصه‌ی اینباکس** (محلی)\n\n📨 {n} پیام  |  🔴 مهم: {imp}\n"
+            + "\n".join(f"👤 {k}: {v} پیام" for k, v in top)
+        )

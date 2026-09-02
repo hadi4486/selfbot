@@ -18,6 +18,7 @@ toggles = {
     "stats_enabled": True,
     "notifications_enabled": True,
     "message_tracker_enabled": True,
+    "autopilot_enabled": False,
 }
 
 _KEYS = list(toggles.keys())
