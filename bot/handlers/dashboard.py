@@ -9,7 +9,7 @@
 """
 import datetime as dt
 
-from telethon import events
+from telethon import Button, events
 
 from ..config import PREFIX, TIMEZONE_OFFSET
 from ..health import get_uptime
@@ -257,8 +257,16 @@ async def build_dashboard() -> str:
 
 
 def _dashboard_buttons() -> list:
-    """میان‌برها به‌صورتِ متنِ قابلِ کپی — بدونِ callback (رفتارِ مستقل از پنل)."""
-    return []
+    """دکمه‌های داشبورد — مثل بقیه‌ی صفحاتِ پنل: بروزرسانی + پنل/بستن."""
+    from .panel import _cb
+
+    return [
+        [
+            Button.inline("🔄 بروزرسانی", _cb("refresh:dashboard")),
+            Button.inline("🔙 پنل", _cb("home")),
+            Button.inline("✖️ بستن", _cb("close")),
+        ],
+    ]
 
 
 @client.on(events.NewMessage(outgoing=True, pattern=pat(["داشبورد", "dashboard"])))
@@ -266,7 +274,7 @@ async def dashboard_handler(event):
     await event.edit("📊 در حال جمع‌کردنِ داشبورد...")
     try:
         text = await build_dashboard()
-        await event.edit(text)
+        await event.edit(text, buttons=_dashboard_buttons())
     except Exception as e:
         _record_error()
         await event.edit(f"❌ خطا در داشبورد: {e}")

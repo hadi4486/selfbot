@@ -819,7 +819,30 @@ if runtime.bot_client is not None:
             return
 
         if action == "dash":
-            await event.answer("📊 برای داشبورد، .داشبورد را با اکانت خودت بفرست", alert=True)
+            # 📊 داشبورد داخلِ خودِ پنل — مثل بقیه‌ی صفحات
+            try:
+                from .dashboard import build_dashboard, _dashboard_buttons
+
+                text = await build_dashboard()
+                await event.edit(text, buttons=_dashboard_buttons())
+            except Exception as e:
+                await event.answer(f"❌ خطا در داشبورد: {e}", alert=True)
+                return
+            await event.answer()
+            return
+
+        if action.startswith("refresh:"):
+            if action[len("refresh:"):] == "dashboard":
+                try:
+                    from .dashboard import build_dashboard, _dashboard_buttons
+
+                    text = await build_dashboard()
+                    await event.edit(text, buttons=_dashboard_buttons())
+                    await event.answer("🔄 بروز شد")
+                except Exception as e:
+                    await event.answer(f"❌ {e}", alert=True)
+                return
+            await event.answer()
             return
 
         if action == "close":
