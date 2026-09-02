@@ -255,3 +255,16 @@ def test_new_combinations():
     assert inventory.combine("radio", "battery") is not None
     assert inventory.combine("rope", "crystal") is not None
     assert inventory.item_def("radio_active") and inventory.item_def("talisman")
+
+def test_answer_with_spaces_reaches_engine():
+    """باگِ قبلی: handler با maxsplit=2 فقط کلمه‌ی اولِ جوابِ چند-کلمه‌ای (order) را
+    به engine می‌داد و معمای ترتیب همیشه «اشتباه» بود."""
+    from bot.escape.puzzles import make_order_puzzle
+    import random as _random
+    pz = make_order_puzzle(_random.Random(42), "circus")
+    assert pz["kind"] == "order" and " " in pz["answer"]
+    # شبیه‌سازیِ دقیقِ پارسِ handler (بعد از فیکسِ maxsplit=1)
+    raw = "پاس " + pz["answer"]
+    parts = raw.split(maxsplit=1)
+    rest = parts[1].strip()
+    assert puzzles.check_answer(pz, rest)

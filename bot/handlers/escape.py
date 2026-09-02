@@ -91,7 +91,10 @@ async def _finalize_and_reply(event, res: dict, chat_id: int, user_id: int) -> N
 @client.on(events.NewMessage(outgoing=True, pattern=pat(["فرار", "escape"])))
 async def escape_handler(event):
     raw = (event.pattern_match.group(1) or "").strip()
-    parts = raw.split(maxsplit=2)
+    # ⚠️ maxsplit=1: جوابِ چند-کلمه‌ای (مثل «ترتیب: 4 2 1 3» یا چیستانِ دوکلمه‌ای) باید
+    # کامل داخلِ rest بماند — با maxsplit=2 فقط کلمه‌ی اول به engine می‌رسید و
+    # معمایِ order همیشه «اشتباه» می‌شد!
+    parts = raw.split(maxsplit=1)
     sub = parts[0].lower() if parts else ""
     rest = parts[1].strip() if len(parts) > 1 else ""
     chat_id, user_id = event.chat_id, runtime.SELF_ID
