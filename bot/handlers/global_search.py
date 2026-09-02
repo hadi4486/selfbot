@@ -448,7 +448,10 @@ async def global_search_handler(event):
         return await event.edit(f"🔍 نتیجه‌ای برای `{_md_escape(query)}` یافت نشد.")
 
     if smart:
-        blob_lines = [f"## {sec}"] + [f"- {it}" for sec, items in results.items() for it in items]
+        blob_lines = []
+        for sec, items in results.items():
+            blob_lines.append(f"## {sec}")
+            blob_lines.extend(f"- {it}" for it in items)
         blob = "\n".join(blob_lines)[:6000]
         try:
             insight = await assistant_brain.summarize_search(query, blob)
