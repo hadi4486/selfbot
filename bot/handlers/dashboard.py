@@ -113,10 +113,53 @@ async def _gather() -> dict:
     try:
         rec = await get_setting_json(_RECENT_KEY, [])
         if isinstance(rec, list):
-            d["recents"] = [k for k in rec[:_MAX_RECENT] if isinstance(k, str)]
+            norm = []
+            for it in rec:
+                if isinstance(it, list) and it and isinstance(it[0], str):
+                    norm.append([it[0], float(it[1]) if len(it) > 1 else 0.0])
+                elif isinstance(it, str):
+                    norm.append([it, 0.0])
+            d["recents"] = norm[:_MAX_RECENT]
     except Exception:
         pass
     return d
+
+
+# بخش‌های قابلِ خاموش/روشن (Personalization)
+_DASH_SECTIONS = {
+    "attention": "🚨 نیاز به توجه",
+    "today": "📅 امروز",
+    "quick": "⚡ Quick Actions",
+    "insight": "🧠 AI Insight",
+    "recent": "🕘 اخیراً",
+    "favorites": "⭐ موردعلاقه‌ها",
+}
+
+
+async def _dash_sections_on() -> dict:
+    """پیش‌فرض: همه روشن. مقادیر از settings (panel_dash_sections: JSON)."""
+    on = {k: True for k in _DASH_SECTIONS}
+    try:
+        saved = await get_setting_json("panel_dash_sections", None)
+        if isinstance(saved, dict):
+            for k, v in saved.items():
+                if k in on:
+                    on[k] = bool(v)
+    except Exception:
+        pass
+    return on
+
+
+async def _toggle_dash_section(section: str) -> bool | None:
+    """toggleِ یک بخش؛ خروجی None = بخشِ نامعتبر."""
+    if section not in _DASH_SECTIONS:
+        return None
+    on = await _dash_sections_on()
+    on[section] = not on[section]
+    from ..repositories.settings_repo import set_setting_json
+
+    await set_setting_json("panel_dash_sections", on)
+    return on[section]
 
 
 def _attention_lines(d: dict, now: dt.datetime) -> list[str]:
@@ -190,13 +233,25 @@ async def _ai_insight(d: dict, local_summary: str) -> str:
 
 
 async def build_dashboard() -> str:
-    """متنِ داشبورد (مشترک بین دستور و آینده)."""
+    """متنِ داشبورد (مشترک بین دستور و دکمه‌ی پنل) — با Personalization."""
     d = await _gather()
     now = dt.datetime.now(dt.timezone.utc)
     local_now = now + dt.timedelta(hours=TIMEZONE_OFFSET)
+    sec_on = await _dash_sections_on()
+    import time as _time
 
-    # ── 👤 STATUS
-    ap = "🟢 روشن" if d["autopilot"] else "🔴 خاموش"
+    from .panel import _CATEGORY_BY_KEY
+
+    favs = []
+    try:
+        favs = await get_setting_json("panel_favorites", [])
+        if not isinstance(favs, list):
+            favs = []
+    except Exception:
+        favs = []
+    favs = [k for k in favs[:4] if k in _CATEGORY_BY_KEY]
+
+    # ── 👤 STATUS (همیشه)
     ai_state = "🟢 Ready" if d["ai_ready"] else "⚫ خاموش"
     lines = [
         "╭────── 🤖 HADI ASSISTANT ──────╮",
@@ -206,50 +261,74 @@ async def build_dashboard() -> str:
     ]
 
     # ── 🚨 ATTENTION
-    att = _attention_lines(d, now)
-    if att:
-        lines.append("🚨 **نیاز به توجه**")
-        lines.extend(f"• {a}" for a in att)
-    else:
-        lines.append("🚨 ✅ Everything looks good")
-    lines.append("├───────────────────────────┤")
+    if sec_on.get("attention"):
+        att = _attention_lines(d, now)
+        if att:
+            lines.append("🚨 **نیاز به توجه**")
+            lines.extend(f"• {a}" for a in att)
+        else:
+            lines.append("🚨 ✅ Everything looks good")
+        lines.append("├───────────────────────────┤")
+
+    # ── ⭐ FAVORITES (حداکثر ۴)
+    if sec_on.get("favorites") and favs:
+        lines.append("⭐ **موردعلاقه‌ها**")
+        lines.append(" • ".join(
+            f"{_CATEGORY_BY_KEY[k]['emoji']} {_CATEGORY_BY_KEY[k]['title']}" for k in favs
+        ))
+        lines.append("├───────────────────────────┤")
 
     # ── 📅 TODAY
-    rem_next = f" • ⏭ بعدی {_fmt_local(d['next_rem'])}" if d["next_rem"] else ""
-    lines += [
-        "📅 **امروز**",
-        f"📝 {len(d['tasks_open'])} کارِ باز  •  📅 {len(d['today_due'])} ددلاینِ امروز",
-        f"⏰ {len(d['reminders'])} یادآوری{rem_next}",
-        f"📥 {d['unread']} خوانده‌نشده  •  🔴 {d['important']} مهم",
-        "├───────────────────────────┤",
-    ]
+    if sec_on.get("today"):
+        rem_next = f" • ⏭ بعدی {_fmt_local(d['next_rem'])}" if d["next_rem"] else ""
+        lines += [
+            "📅 **امروز**",
+            f"📝 {len(d['tasks_open'])} کارِ باز  •  📅 {len(d['today_due'])} ددلاینِ امروز",
+            f"⏰ {len(d['reminders'])} یادآوری{rem_next}",
+            f"📥 {d['unread']} خوانده‌نشده  •  🔴 {d['important']} مهم",
+            "├───────────────────────────┤",
+        ]
 
     # ── 🧠 AI INSIGHT
-    local_summary = (
-        f"کارهای باز: {len(d['tasks_open'])}، عقب‌افتاده: {len(d['overdue'])}، "
-        f"ددلاینِ امروز: {len(d['today_due'])}، پیام‌های مهم: {d['important']}، "
-        f"یادآوری‌ها: {len(d['reminders'])}"
-    )
-    insight = await _ai_insight(d, local_summary)
-    suggestion = _task_suggestion(d)
-    lines.append("🧠 **AI INSIGHT**")
-    lines.append(f"🤖 AI: {ai_state}" + (f" ({d['ai_model']})" if d["ai_model"] else ""))
-    lines.append(f"💡 {insight}")
-    if suggestion:
-        lines.append(f"🎯 پیشنهاد: {suggestion}")
-    lines.append("├───────────────────────────┤")
+    if sec_on.get("insight"):
+        local_summary = (
+            f"کارهای باز: {len(d['tasks_open'])}، عقب‌افتاده: {len(d['overdue'])}، "
+            f"ددلاینِ امروز: {len(d['today_due'])}، پیام‌های مهم: {d['important']}، "
+            f"یادآوری‌ها: {len(d['reminders'])}"
+        )
+        insight = await _ai_insight(d, local_summary)
+        suggestion = _task_suggestion(d)
+        lines.append("🧠 **AI INSIGHT**")
+        lines.append(f"🤖 AI: {ai_state}" + (f" ({d['ai_model']})" if d["ai_model"] else ""))
+        lines.append(f"💡 {insight}")
+        if suggestion:
+            lines.append(f"🎯 پیشنهاد: {suggestion}")
+        lines.append("├───────────────────────────┤")
 
-    # ── 🕘 RECENT (نامِ بخش‌های اخیرِ پنل) + خلاصه‌ی آمارِ کوچک
-    if d["recents"]:
-        from .panel import _CATEGORY_BY_KEY
-
-        labels = [f"{_CATEGORY_BY_KEY[k]['emoji']} {_CATEGORY_BY_KEY[k]['title']}"
-                  for k in d["recents"] if k in _CATEGORY_BY_KEY]
+    # ── 🕘 RECENT با «چند دقیقه پیش»
+    if sec_on.get("recent") and d["recents"]:
+        labels = []
+        for it in d["recents"]:
+            key, ts = (it if isinstance(it, list) else [it, 0.0])[:2]
+            if key not in _CATEGORY_BY_KEY:
+                continue
+            cat = _CATEGORY_BY_KEY[key]
+            ago = ""
+            mins = int((_time.time() - float(ts)) // 60) if ts else None
+            if mins is not None and mins >= 0:
+                ago = f" ({mins}د پیش)" if mins < 60 else f" ({mins // 60}س پیش)"
+            labels.append(f"{cat['emoji']} {cat['title']}{ago}")
         if labels:
             lines.append("🕘 اخیر: " + " • ".join(labels[:4]))
+
+    # ── ⚡ QUICK ACTIONS
+    if sec_on.get("quick"):
+        lines += [
+            "⚡ **QUICK ACTIONS**",
+            f"`{PREFIX}پرسش` • `{PREFIX}اینباکس` • `{PREFIX}کار` • `{PREFIX}یادآوری`",
+        ]
+
     lines += [
-        "⚡ **QUICK ACTIONS**",
-        f"`{PREFIX}پرسش` • `{PREFIX}اینباکس` • `{PREFIX}کار` • `{PREFIX}یادآوری`",
         f"📊 {d['msgs']:,} پیام  •  {d['cmds']:,} دستور  •  🎮 {d['games']} فرار",
         "╰───────────────────────────╯",
     ]
@@ -263,9 +342,10 @@ def _dashboard_buttons() -> list:
     return [
         [
             Button.inline("🔄 بروزرسانی", _cb("refresh:dashboard")),
+            Button.inline("⚙️ بخش‌ها", _cb("dashcfg")),
             Button.inline("🔙 پنل", _cb("home")),
-            Button.inline("✖️ بستن", _cb("close")),
         ],
+        [Button.inline("✖️ بستن", _cb("close"))],
     ]
 
 

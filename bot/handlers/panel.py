@@ -502,16 +502,28 @@ async def _get_json_setting(key: str, default):
 
 
 async def _push_json_setting(key: str, value: str, max_items: int):
-    """value را به ابتدای لیستِ JSON-key اضافه می‌کند (بدونِ تکرار، سقف‌دار)."""
+    """value را به ابتدای لیستِ JSON-key اضافه می‌کند (بدونِ تکرار، سقف‌دار).
+
+    برای _RECENT_KEY ورودی به‌صورتِ [cat_key, unix_ts] ذخیره می‌شود تا داشبورد
+    بتواند «چند دقیقه پیش» را نشان دهد؛ رکوردهای قدیمیِ رشته‌ای هم خوانده می‌شوند.
+    """
+    import time as _time
+
     from ..repositories import settings_repo
 
     items = await settings_repo.get_setting_json(key, [])
     if not isinstance(items, list):
         items = []
-    if value in items:
-        items.remove(value)
-    items.insert(0, value)
-    await settings_repo.set_setting_json(key, items[:max_items])
+    # نرمال‌سازی: هر آیتم = [key_str, ts_float]
+    norm = []
+    for it in items:
+        if isinstance(it, list) and it and isinstance(it[0], str):
+            norm.append([it[0], float(it[1]) if len(it) > 1 else 0.0])
+        elif isinstance(it, str):
+            norm.append([it, 0.0])
+    norm = [it for it in norm if it[0] != value]
+    norm.insert(0, [value, _time.time()])
+    await settings_repo.set_setting_json(key, norm[:max_items])
 
 
 async def _toggle_favorite(cat_key: str) -> bool:
@@ -612,25 +624,40 @@ def build_search_buttons(matches):
     return rows
 
 
+def _recent_keys(recents):
+    """فرمتِ قدیم (str) و جدید ([key, ts]) را به [(key, ts)] نرمال می‌کند."""
+    out = []
+    for it in recents[:8]:
+        if isinstance(it, list) and it and isinstance(it[0], str):
+            out.append((it[0], float(it[1]) if len(it) > 1 else 0.0))
+        elif isinstance(it, str):
+            out.append((it, 0.0))
+    return [it for it in out if it[0] in _CATEGORY_BY_KEY]
+
+
 def build_recent_text(recents):
+    import time as _time
+
     lines = ["🕘 **اخیراً استفاده‌شده**", _divider(), ""]
-    for key in recents[:8]:
-        if key in _CATEGORY_BY_KEY:
-            cat = _CATEGORY_BY_KEY[key]
-            lines.append(f"{cat['emoji']} **{cat['title']}** — {len(cat['commands'])} دستور")
+    for key, ts in _recent_keys(recents):
+        cat = _CATEGORY_BY_KEY[key]
+        ago = ""
+        if ts > 0:
+            mins = int((_time.time() - ts) // 60)
+            ago = f" ({mins}د پیش)" if mins < 60 else f" ({mins // 60}س پیش)"
+        lines.append(f"{cat['emoji']} **{cat['title']}**{ago} — {len(cat['commands'])} دستور")
     return "\n".join(lines)
 
 
 def build_recent_buttons(recents):
     rows = []
     row = []
-    for key in recents[:8]:
-        if key in _CATEGORY_BY_KEY:
-            cat = _CATEGORY_BY_KEY[key]
-            row.append(Button.inline(f"{cat['emoji']} {cat['title']}", _cb(f"cat:{key}")))
-            if len(row) == 2:
-                rows.append(row)
-                row = []
+    for key, _ts in _recent_keys(recents):
+        cat = _CATEGORY_BY_KEY[key]
+        row.append(Button.inline(f"{cat['emoji']} {cat['title']}", _cb(f"cat:{key}")))
+        if len(row) == 2:
+            rows.append(row)
+            row = []
     if row:
         rows.append(row)
     rows.append([Button.inline("🔙 بازگشت", _cb("home"))])
@@ -829,6 +856,45 @@ if runtime.bot_client is not None:
                 await event.answer(f"❌ خطا در داشبورد: {e}", alert=True)
                 return
             await event.answer()
+            return
+
+        if action == "dashcfg":
+            # ⚙️ تنظیماتِ داشبورد: روشن/خاموشِ هر بخش
+            try:
+                from .dashboard import _dash_sections_on
+
+                on = await _dash_sections_on()
+                rows = [[Button.inline(
+                    f"{'✅' if is_on else '⬜'} {label}", _cb(f"dashcfg:{k}")
+                )] for k, label in on.items()]
+                rows.append([Button.inline("🔙 بازگشت", _cb("home"))])
+                await event.edit(
+                    "⚙️ **تنظیماتِ داشبورد**\nهر بخش را روشن/خاموش کن:",
+                    buttons=rows,
+                )
+            except Exception as e:
+                await event.answer(f"❌ {e}", alert=True)
+                return
+            await event.answer()
+            return
+
+        if action.startswith("dashcfg:"):
+            try:
+                from .dashboard import _dash_sections_on, _toggle_dash_section
+
+                new_state = await _toggle_dash_section(action[len("dashcfg:"):])
+                if new_state is None:
+                    await event.answer()
+                    return
+                on = await _dash_sections_on()
+                rows = [[Button.inline(
+                    f"{'✅' if is_on else '⬜'} {label}", _cb(f"dashcfg:{k}")
+                )] for k, label in on.items()]
+                rows.append([Button.inline("🔙 بازگشت", _cb("home"))])
+                await event.edit("⚙️ **تنظیماتِ داشبورد**\nهر بخش را روشن/خاموش کن:", buttons=rows)
+                await event.answer("تغییر کرد ✓")
+            except Exception as e:
+                await event.answer(f"❌ {e}", alert=True)
             return
 
         if action.startswith("refresh:"):
