@@ -819,7 +819,7 @@ if runtime.bot_client is not None:
             return
 
         if action == "dash":
-            await event.answer("📊 `.داشبورد` را با اکانت خودت بفرست", alert=True)
+            await event.answer("📊 برای داشبورد، .داشبورد را با اکانت خودت بفرست", alert=True)
             return
 
         if action == "close":
