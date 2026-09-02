@@ -393,9 +393,6 @@ async def send_settings_backup(caption_note: str = "") -> None:
     await client.send_file("me", bio, caption=caption)
 
 
-@client.on(events.NewMessage(outgoing=True, pattern=pat(["پشتیبان", "backup"])))
-
-
 async def _snapshot_ai_memory() -> list:
     from ..db.models_ext import AIMemory
     from sqlalchemy import select
@@ -431,6 +428,7 @@ async def _snapshot_schedules() -> list:
     return out
 
 
+@client.on(events.NewMessage(outgoing=True, pattern=pat(["پشتیبان", "backup"])))
 async def backup_handler(event):
     args = (event.pattern_match.group(1) or "").strip()
     parts = args.split(None, 1)
