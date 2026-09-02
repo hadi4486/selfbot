@@ -90,7 +90,7 @@ def _parse_json_body(text: str):
         raise AIRequestError(f"پاسخِ نامعتبر (JSON) از سرویسِ هوش مصنوعی: {e}") from e
 
 
-async def ask_ai(messages: list[dict], *, max_tokens: int | None = None, return_raw: bool = False):
+async def ask_ai(messages: list[dict], *, max_tokens: int | None = None, return_raw: bool = False, model_override: str | None = None):
     """
     messages: لیستِ استانداردِ OpenAI chat messages (هرکدوم {"role": ..., "content": ...}).
     خروجی: متنِ پاسخِ مدل (str) - مگر این‌که return_raw=True باشه، که کلِ
@@ -107,7 +107,7 @@ async def ask_ai(messages: list[dict], *, max_tokens: int | None = None, return_
     session = await get_http_session()
     timeout = aiohttp.ClientTimeout(total=config.AI_TIMEOUT)
     payload = {
-        "model": config.AI_MODEL,
+        "model": model_override or config.AI_MODEL,
         "messages": messages,
         "max_tokens": max_tokens or config.AI_MAX_TOKENS,
         "stream": False,

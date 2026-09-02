@@ -19,6 +19,7 @@ toggles = {
     "notifications_enabled": True,
     "message_tracker_enabled": True,
     "autopilot_enabled": False,
+    "agent_mode": False,
 }
 
 _KEYS = list(toggles.keys())

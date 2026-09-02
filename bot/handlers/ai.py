@@ -56,10 +56,23 @@ async def ask_handler(event):
     question = (event.pattern_match.group(1) or "").strip()
     context_text = None
 
+    image_part = None  # 🖼 برای contextِ مولتی‌مدال
     if event.is_reply:
         reply = await event.get_reply_message()
         context_text = reply.raw_text or ""
-        if not context_text and audio.is_audio_message(reply):
+        if reply.media and type(reply.media).__name__ == "MessageMediaPhoto":
+            # 🖼 عکس → به‌عنوانِ بخشی از context (vision) کنارِ سوالِ کاربر
+            await event.edit("🖼 در حال دیدنِ عکس...")
+            try:
+                import base64
+
+                data = await reply.download_media(bytes)
+                b64 = base64.b64encode(data).decode()
+                image_part = {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}
+            except Exception as e:
+                _record_error()
+                return await event.edit(f"❌ خطا در دانلودِ عکس: {e}")
+        elif not context_text and audio.is_audio_message(reply):
             # ریپلای‌شده صوتیه و متنِ مستقیم نداره؛ خودکار رونویسی می‌کنیم
             # تا `.پرسش`/`.پرسش <سوال>` روی پیامِ صوتی هم کار کنه.
             await event.edit("⏳ در حال رونویسیِ پیامِ صوتی...")
@@ -88,16 +101,59 @@ async def ask_handler(event):
     else:
         user_content = question
 
-    # 🧠 خاطراتِ مرتبطِ حافظه‌ی هوشمند (اگر هست) به system اضافه می‌شود
-    system_prompt = _SYSTEM_PROMPT
+    # 🤖 Agent Mode: اگر روشن باشد، Context Engine + Tool Calling اجرا می‌شود
+    from ..storage.settings_toggles import toggles
+
+    if toggles.get("agent_mode", False):
+        await event.edit("🧠 عامل در حال فکر کردن و استفاده از ابزارها...")
+        try:
+            from .. import ai_agent
+
+            ctx = await ai_agent.build_context(question or context_text or "")
+            answer = await ai_agent.run_agent(user_content, context=ctx)
+        except ai.AIDisabledError:
+            return await event.edit(
+                "⚠️ **قابلیتِ هوش مصنوعی غیرفعاله**\n"
+                "برای فعال‌سازی، متغیرِ محیطیِ `AI_API_KEY` رو ست کن."
+            )
+        except ai.AIRequestError as e:
+            _record_error()
+            return await event.edit(f"❌ خطا در ارتباط با سرویسِ هوش مصنوعی: {e}")
+        if not answer:
+            return await event.edit("⚠️ عامل پاسخِ خالی برگردوند")
+        tagged_text, entities = ai.tag_ai_text(f"🤖 {answer}")
+        return await event.edit(tagged_text, formatting_entities=entities)
+
+    # 🎤 شخصیتِ فعال + 🧠 Context Engine: خاطراتِ مرتبط + کارهای باز (سبک)
+    from ..ai_agent import get_personality, personality_system_block
+
+    system_prompt = _SYSTEM_PROMPT + "\n" + personality_system_block(await get_personality())
     memory_block = await ai.build_memory_context(question or context_text or "")
+    tasks_block = ""
+    try:
+        from ..repositories import tasks_repo as _tr
+
+        opens = await _tr.list_tasks(done=False, limit=5)
+        if opens:
+            tasks_block = "\n📝 کارهای بازِ کاربر:\n" + "\n".join(
+                f"- #{t['id']} {t['text'][:50]}" for t in opens
+            )
+    except Exception:
+        pass
     if memory_block:
         system_prompt = _SYSTEM_PROMPT + "\n\n" + memory_block
+    if tasks_block:
+        system_prompt = system_prompt + tasks_block
 
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_content},
-    ]
+    messages = [{"role": "system", "content": system_prompt}]
+    if image_part:
+        user_msg = {"role": "user", "content": [
+            {"type": "text", "text": user_content},
+            image_part,
+        ]}
+        messages.append(user_msg)
+    else:
+        messages.append({"role": "user", "content": user_content})
     await _ask_and_reply(event, messages)
 
 
@@ -221,3 +277,56 @@ async def ai_translate_handler(event):
         return await event.edit("⚠️ مدل پاسخِ خالی برگردوند")
     tagged_text, entities = ai.tag_ai_text(f"🌐🤖 ترجمه‌ی هوشمند ({lang}):\n{answer}")
     await event.edit(tagged_text, formatting_entities=entities)
+
+@client.on(events.NewMessage(outgoing=True, pattern=pat(["عامل", "agent"])))
+async def agent_handler(event):
+    """`.عامل روشن/خاموش/وضعیت` — AI Agent Mode برای `.پرسش` (Tool Calling + Context)."""
+    from ..storage.settings_toggles import set_toggle, toggles
+
+    arg = (event.pattern_match.group(1) or "").strip().lower()
+    if arg in ("روشن", "on", "1"):
+        await set_toggle("agent_mode", True)
+        return await event.edit(
+            "🧠 **عامل (Agent Mode) روشن شد**\n"
+            "حالا `.پرسش <هرچی>` از Context Engine + ابزارها استفاده می‌کند:\n"
+            "ثبتِ کار، جستجوی حافظه، لیستِ کارها، انجامِ کار"
+        )
+    if arg in ("خاموش", "off", "0"):
+        await set_toggle("agent_mode", False)
+        return await event.edit("🧠 عامل خاموش شد — `.پرسش` به حالتِ عادی برگشت")
+    state = "🟢 روشن" if toggles.get("agent_mode", False) else "🔴 خاموش"
+    await event.edit(
+        "🧠 **عامل (AI Agent)**\n"
+        f"وضعیت: {state}\n\n"
+        f"`{PREFIX}عامل روشن/خاموش`\n\n"
+        "در حالتِ روشن، `.پرسش` قبل از پاسخ:\n"
+        "• Context Engine را می‌سازد (حافظه + کارها + یادداشت‌ها)\n"
+        "• در صورتِ نیاز ابزار صدا می‌زند (ثبت/لیست/انجامِ کار، جستجوی حافظه)\n"
+        "• مدلِ مناسب را بر اساسِ نیت انتخاب می‌کند (AI_MODEL_FAST/CODING/REASONING)"
+    )
+
+@client.on(events.NewMessage(outgoing=True, pattern=pat(["شخصیت", "personality"])))
+async def personality_handler(event):
+    """`.شخصیت` — نمایش؛ `.شخصیت <نامِ preset>` — انتخاب؛ `.شخصیت سفارشی <متن>`"""
+    from ..ai_agent import PERSONALITY_PRESETS, get_personality, set_personality
+
+    arg = (event.pattern_match.group(1) or "").strip()
+    if not arg:
+        cur = await get_personality()
+        return await event.edit(
+            "🎭 **شخصیتِ AI**\n\n"
+            f"فعلی: {cur}\n\n"
+            "پیش‌فرض‌ها: " + " • ".join(PERSONALITY_PRESETS) + "\n"
+            f"`{PREFIX}شخصیت <نام>` برای انتخاب، یا `{PREFIX}شخصیت سفارشی <توضیح>`"
+        )
+    if arg.startswith("سفارشی"):
+        custom = arg[len("سفارشی"):].strip()
+        if not custom:
+            return await event.edit("مثال: `.شخصیت سفارشی دستیارِ فنیِ خلاصه‌گو باش`")
+        await set_personality(custom)
+        return await event.edit(f"🎭 شخصیتِ سفارشی ذخیره شد: {custom}")
+    if arg in PERSONALITY_PRESETS:
+        await set_personality(PERSONALITY_PRESETS[arg])
+        return await event.edit(f"🎭 شخصیت روی **{arg}** تنظیم شد.")
+    await set_personality(arg)
+    await event.edit(f"🎭 شخصیتِ سفارشی ذخیره شد: {arg}")

@@ -58,4 +58,5 @@ from . import (
     dashboard,
     security,
     gamification,
+    knowledge,
 )

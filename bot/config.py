@@ -65,6 +65,10 @@ BACKUP_MAX_MEDIA = 50
 AI_API_KEY = os.getenv("AI_API_KEY", "")
 AI_API_BASE = os.getenv("AI_API_BASE", "https://api.openai.com/v1")
 AI_MODEL = os.getenv("AI_MODEL", "gpt-4o-mini")
+# AI Router (اختیاری): اگر ست شوند، ai_agent بر اساسِ نیت مدل را انتخاب می‌کند
+AI_MODEL_FAST = os.getenv("AI_MODEL_FAST", "")
+AI_MODEL_CODING = os.getenv("AI_MODEL_CODING", "")
+AI_MODEL_REASONING = os.getenv("AI_MODEL_REASONING", "")
 AI_MAX_TOKENS = int(os.getenv("AI_MAX_TOKENS", "600"))
 AI_TIMEOUT = int(os.getenv("AI_TIMEOUT", "30"))
 AI_SUMMARY_MAX_MESSAGES = int(os.getenv("AI_SUMMARY_MAX_MESSAGES", "300"))

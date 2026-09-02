@@ -21,7 +21,9 @@ SMART_ICONS = {
     "Idea": "💡",
     "Link": "🔗",
 }
-ALL_CATEGORIES = CATEGORIES + SMART_CATEGORIES
+KB_CATEGORY = "دانش"  # Knowledge Base شخصی (.دانش)
+
+ALL_CATEGORIES = CATEGORIES + SMART_CATEGORIES + [KB_CATEGORY]
 
 
 async def save_memory(category: str, key: str, value: str) -> AIMemory:
