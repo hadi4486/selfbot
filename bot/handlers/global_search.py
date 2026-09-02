@@ -449,13 +449,24 @@ async def global_search_handler(event):
 
     if smart:
         blob_lines = []
+        linkable = []  # آیتم‌هایی که لینکِ پیام دارند (کلیک → همان پیام)
         for sec, items in results.items():
             blob_lines.append(f"## {sec}")
             blob_lines.extend(f"- {it}" for it in items)
+            for it in items:
+                if "](http" in it or "](tg://" in it:
+                    linkable.append(f"📁 {sec}: {it}")
         blob = "\n".join(blob_lines)[:6000]
         try:
             insight = await assistant_brain.summarize_search(query, blob)
-            return await event.edit(f"🧠 **جستجوی هوشمند: `{_md_escape(query)}`**\n\n{insight}")
+            body = f"🧠 **جستجوی هوشمند: `{_md_escape(query)}`**\n\n{insight}"
+            if linkable:
+                shown = linkable[:10]
+                body += f"\n\n{_divider() if False else '———'} **لینکِ نتایج** ({len(linkable)})\n" + "\n".join(shown)
+                total_links = len(linkable)
+                if total_links > len(shown):
+                    body += f"\n_… و {total_links - len(shown)} موردِ دیگر (جستجوی عادی همه را نشان می‌دهد)_"
+            return await event.edit(body)
         except Exception:
             pass  # AI در دسترس نیست → خروجیِ عادی
 
